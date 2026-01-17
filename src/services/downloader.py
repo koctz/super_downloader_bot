@@ -186,11 +186,7 @@ class VideoDownloader:
             is_insta = "instagram" in extractor.lower() or "instagram.com" in webpage_url.lower()
 
             # TikTok detection — ТЕПЕРЬ НАДЁЖНО
-            is_tiktok = (
-                "tiktok.com" in url.lower() or
-                "tiktok.com" in webpage_url.lower() or
-                "tiktok" in extractor.lower()
-            )
+            is_tiktok = "tiktok.com" in url.lower()
 
             need_deep_processing = is_insta or is_tiktok
 
@@ -213,16 +209,6 @@ class VideoDownloader:
                 file_size=os.path.getsize(final_path),
             )
 
-            return DownloadedVideo(
-                path=final_path,
-                title=info.get("title", "Video"),
-                duration=int(duration or 0),
-                author=info.get("uploader", "Unknown"),
-                width=info.get("width", 0),
-                height=info.get("height", 0),
-                thumb_url=info.get("thumbnail", ""),
-                file_size=os.path.getsize(final_path),
-            )
 
     async def download(self, url: str, mode: str = 'video') -> DownloadedVideo:
         url = self._normalize_url(url)
