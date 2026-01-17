@@ -54,60 +54,65 @@ class VideoDownloader:
         return output_path
 
     def _process_video(self, input_path, duration):
-        """Бронебойная версия: полное исправление для iPhone и Instagram"""
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
             
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
-        MAX_SIZE = 45 * 1024 * 1024 
-
-        print(f"DEBUG: Глубокая обработка для iOS: {input_path}")
         
-        # Базовый набор команд для максимальной совместимости
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", # Масштаб до 720p
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-pix_fmt", "yuv420p",        # Цветовое пространство iPhone
-            "-r", "30",                   # Принудительные 30 кадров/сек (убирает фризы)
-            "-g", "60",                   # Интервал ключевых кадров
-            "-keyint_min", "2",
-            "-vsync", "cfr",              # Принудительная синхронизация кадров
-            "-profile:v", "main",
-            "-level", "3.1",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-ar", "44100",               # Частота дискретизации звука
-            "-movflags", "+faststart",    # Позволяет смотреть видео до полной загрузки
-            "-video_track_timescale", "30000", # Исправляет таймстемпы Instagram
-            output_path
-        ]
+        # Лимит 50МБ, ставим 46МБ для запаса
+        MAX_SIZE_BYTES = 46 * 1024 * 1024 
+        is_insta = "instagram" in input_path.lower() or "reels" in input_path.lower()
 
-        # Если файл слишком большой, вставляем параметры битрейта ПЕРЕД output_path
-        if file_size > MAX_SIZE:
-            target_bitrate = int((MAX_SIZE * 8) / max(duration, 1))
-            target_bitrate = int(target_bitrate * 0.8)
-            # Вставляем параметры битрейта перед последним элементом (путем вывода)
-            cmd.insert(-1, "-b:v")
-            cmd.insert(-1, str(target_bitrate))
-            cmd.insert(-1, "-maxrate")
-            cmd.insert(-1, str(target_bitrate))
-            cmd.insert(-1, "-bufsize")
-            cmd.insert(-1, str(target_bitrate * 2))
+        # Если видео легкое и не из Инсты - копируем мгновенно
+        if file_size <= MAX_SIZE_BYTES and not is_insta:
+            print(f"DEBUG: Быстрая перепаковка: {input_path}")
+            cmd = [
+                "ffmpeg", "-y", "-i", input_path,
+                "-c", "copy", "-map_metadata", "0",
+                "-movflags", "+faststart", output_path
+            ]
+        else:
+            # Для тяжелых видео или Инстаграма - жмем
+            print(f"DEBUG: Сжатие/Оптимизация видео ({file_size // 1048576} MB)")
+            
+            # РАССЧЕТ БИТРЕЙТА для длинных видео (чтобы влезло в 46МБ)
+            # Формула: (Размер в битах / длительность) - битрейт звука
+            target_total_bitrate = int((MAX_SIZE_BYTES * 8) / max(duration, 1))
+            video_bitrate = int(target_total_bitrate * 0.85) # оставляем 15% на звук и метаданные
+            
+            cmd = [
+                "ffmpeg", "-y", "-i", input_path,
+                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", # Ограничение 720p
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                "-r", "30",
+                "-c:a", "aac", "-b:a", "96k", # Чуть снижаем звук для экономии места
+                "-movflags", "+faststart",
+            ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
+            # Если файл реально большой, принудительно ограничиваем битрейт
+            if file_size > MAX_SIZE_BYTES:
+                cmd.extend([
+                    "-b:v", str(video_bitrate),
+                    "-maxrate", str(video_bitrate),
+                    "-bufsize", str(video_bitrate * 2)
+                ])
+            
+            cmd.append(output_path)
+
+        # Увеличиваем время ожидания для тяжелых файлов (timeout 300 сек)
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=300)
+        except subprocess.TimeoutExpired:
+            print("ERROR: FFmpeg работал слишком долго и был остановлен")
+            raise DownloadError("Видео слишком длинное, сервер не успел его обработать.")
+
         if os.path.exists(input_path):
             try: os.remove(input_path)
             except: pass
-
-        if result.returncode != 0:
-            print(f"FFMPEG ERROR: {result.stderr}")
-            raise DownloadError(f"Ошибка FFmpeg: {result.stderr[:100]}")
 
         return output_path
         
