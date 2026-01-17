@@ -99,6 +99,7 @@ class VideoDownloader:
         return opts
 
     def _process_video(self, input_path, duration):
+        """Оптимизированная обработка: сохранение пропорций + совместимость с мобильными"""
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
@@ -106,29 +107,41 @@ class VideoDownloader:
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
 
-        # Твоя логика сжатия под 50МБ
-        if file_size > 48 * 1024 * 1024:
-            target_bitrate = int((43 * 1024 * 1024 * 8) / max(duration, 1))
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-c:v", "libx264", "-preset", "ultrafast", "-b:v", str(target_bitrate),
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "faststart", output_path
-            ]
-        else:
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-                "-pix_fmt", "yuv420p", "-c:a", "aac",
-                "-movflags", "faststart", output_path
-            ]
+        # Базовые аргументы: 
+        # scale='if(gte(iw,ih),-2,720):if(gte(iw,ih),720,-2)' — делает короткую сторону 720p, сохраняя пропорции
+        # setsar=1 — сбрасывает специфические настройки соотношения сторон пикселя (убирает растянутость)
+        vf_params = "scale='if(gte(iw,ih),-2,720):if(gte(iw,ih),720,-2)',setsar=1"
 
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", vf_params,
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "faststart", output_path
+        ]
+
+        # Если файл больше 48МБ, добавляем расчет битрейта
+        if file_size > 48 * 1024 * 1024:
+            target_bitrate = int((42 * 1024 * 1024 * 8) / max(duration, 1))
+            # Вставляем битрейт перед выходным файлом
+            cmd.insert(-1, "-b:v")
+            cmd.insert(-1, str(target_bitrate))
+        else:
+            # Если сжимать не надо, ставим среднее качество
+            cmd.insert(-1, "-crf")
+            cmd.insert(-1, "23")
+
+        print(f"DEBUG: Запуск FFmpeg для {input_path}")
         result = subprocess.run(cmd, capture_output=True, text=True)
+        
         if os.path.exists(input_path):
             try: os.remove(input_path)
             except: pass
+
         if result.returncode != 0:
+            print(f"FFMPEG ERROR: {result.stderr}")
             raise DownloadError(f"FFmpeg error: {result.stderr[:200]}")
+
         return output_path
 
     def _download_sync(self, url: str, temp_path_raw: str) -> DownloadedVideo:
