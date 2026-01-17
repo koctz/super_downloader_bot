@@ -54,7 +54,7 @@ class VideoDownloader:
         return output_path
 
     def _process_video(self, input_path, duration):
-        """Оптимизированная обработка: сжатие только при необходимости"""
+        """Исправленная версия: гарантирует совместимость с iPhone"""
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
@@ -62,36 +62,48 @@ class VideoDownloader:
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
         
-        # Лимит Telegram для обычных ботов ~50MB. Берем запас (45MB)
+        # Лимит Telegram ~50MB.
         MAX_SIZE = 45 * 1024 * 1024 
 
-        # Если файл небольшой, просто "причесываем" его без перекодировки (очень быстро)
-        if file_size <= MAX_SIZE:
+        # Проверяем, инстаграм ли это (инстаграм чаще всего дает несовместимый HEVC)
+        is_instagram = "final_instagram" in base or "raw_" in input_path # можно уточнить логику
+
+        # Если файл небольшой И это не инстаграм — копируем
+        # НО: лучше для надежности инстаграм всегда перекодировать
+        if file_size <= MAX_SIZE and not ("instagram" in input_path.lower()):
             print(f"DEBUG: Быстрая обработка (копирование): {input_path}")
             cmd = [
                 "ffmpeg", "-y", "-i", input_path,
-                "-c", "copy", # Копируем потоки без нагрузки на CPU
-                "-map_metadata", "0", "-movflags", "faststart",
-                output_path
-            ]
-        else:
-            # Если файл большой — жмем по полной
-            print(f"DEBUG: Файл большой ({file_size//1048576}MB), начинаю сжатие...")
-            target_bitrate = int((MAX_SIZE * 8) / max(duration, 1))
-            # Уменьшаем битрейт на 10% для надежности
-            target_bitrate = int(target_bitrate * 0.9)
-            
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", # 720p max
-                "-c:v", "libx264", "-preset", "ultrafast",
-                "-b:v", str(target_bitrate),
-                "-maxrate", str(target_bitrate),
-                "-bufsize", str(target_bitrate * 2),
-                "-c:a", "aac", "-b:a", "128k",
+                "-c", "copy",
+                "-map_metadata", "0", 
+                "-pix_fmt", "yuv420p", # Добавляем для совместимости
                 "-movflags", "faststart",
                 output_path
             ]
+        else:
+            # Для больших файлов или Instagram — полная перекодировка
+            print(f"DEBUG: Полная обработка для совместимости с iOS: {input_path}")
+            
+            # Базовые параметры
+            cmd = [
+                "ffmpeg", "-y", "-i", input_path,
+                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1",
+                "-c:v", "libx264", 
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", # КРИТИЧНО ДЛЯ iPHONE
+                "-profile:v", "main",   # Гарантирует чтение на старых iOS
+                "-level", "3.1",
+                "-c:a", "aac", 
+                "-b:a", "128k",
+                "-movflags", "faststart",
+                output_path
+            ]
+
+            # Если всё еще слишком большой — ограничиваем битрейт
+            if file_size > MAX_SIZE:
+                target_bitrate = int((MAX_SIZE * 8) / max(duration, 1))
+                target_bitrate = int(target_bitrate * 0.85)
+                cmd.extend(["-b:v", str(target_bitrate), "-maxrate", str(target_bitrate), "-bufsize", str(target_bitrate * 2)])
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         
