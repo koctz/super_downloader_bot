@@ -1,43 +1,98 @@
-sudo apt update && sudo apt upgrade -y
-sudo apt install ffmpeg git python3-pip python3-venv -y
+🤖 Youtube Download Bot — Универсальный загрузчик
+Бот для скачивания видео и аудио из TikTok, Instagram (Reels), YouTube и VK. Оптимизирован для работы на iPhone (исправляет проблему «застывшего кадра» в Instagram) и автоматически сжимает тяжелые видео под лимиты Telegram (50 МБ).
 
-# Клонируем репозиторий
-git clone https://github.com/koctz/super_downloader_bot.git
+🚀 Установка на сервер (Ubuntu/Debian)
+1. Подготовка системы
+Обновите пакеты и установите FFmpeg (критически важен для обработки видео):
+
+Bash
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install python3-pip python3-venv ffmpeg git -y
+2. Клонирование и настройка
+Bash
+
+git clone https://github.com/ВАШ_АККАУНТ/super_downloader_bot.git
 cd super_downloader_bot
 
-# Создаем виртуальное окружение
+# Создание виртуального окружения
 python3 -m venv venv
 source venv/bin/activate
 
-# Устанавливаем зависимости
+# Установка зависимостей
 pip install -r requirements.txt
+3. Настройка конфигурации
+Отредактируйте файл src/config.py или создайте .env, указав ваш Bot Token, Admin ID и Channel ID для обязательной подписки.
 
-nano .env
+⚙️ Постоянная работа (Systemd)
+Чтобы бот работал 24/7 и запускался сам после перезагрузки сервера:
+
+Создайте файл службы:
+
+Bash
+
+sudo nano /etc/systemd/system/download_bot.service
+Вставьте следующее содержимое:
+
+Ini, TOML
 
 [Unit]
-Description=Telegram Super Downloader Bot
+Description=Telegram Download Bot
 After=network.target
 
 [Service]
+Type=simple
 User=root
-Group=root
 WorkingDirectory=/root/super_downloader_bot
-EnvironmentFile=/root/super_downloader_bot/.env
 ExecStart=/root/super_downloader_bot/venv/bin/python run.py
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
+Запустите службу:
 
+Bash
 
-# Перезагружаем менеджер служб
 sudo systemctl daemon-reload
+sudo systemctl enable download_bot
+sudo systemctl start download_bot
+🔄 Инструкция по обновлению
+Когда вы вносите правки в код или пушите их в репозиторий, используйте этот алгоритм для обновления на сервере:
 
-# Включаем автозагрузку бота
-sudo systemctl enable tgbot
+Перейдите в папку и затяните код:
 
-# Запускаем бота
-sudo systemctl start tgbot
+Bash
 
-journalctl -u tgbot -f
+cd /root/super_downloader_bot
+git pull origin main
+Обновите библиотеки (если добавлялись новые):
+
+Bash
+
+./venv/bin/pip install -r requirements.txt
+Перезапустите бота:
+
+Bash
+
+sudo systemctl restart download_bot
+Проверьте статус:
+
+Bash
+
+sudo systemctl status download_bot
+🛠 Управление и логи
+Просмотр логов в реальном времени: journalctl -u download_bot -f
+
+Остановка бота: sudo systemctl stop download_bot
+
+Перезапуск: sudo systemctl restart download_bot
+
+💎 Особенности реализации
+iPhone Fix (Instagram): Для ссылок из Instagram используется глубокая перекодировка (-pix_fmt yuv420p, -r 30, -vsync cfr), что решает проблему зависания видео на iOS.
+
+Fast Transcoding: Для YouTube/TikTok используется метод -c copy, если файл весит меньше 45 МБ, что позволяет отдавать видео мгновенно.
+
+Auto-Compression: Если видео длинное (клипы YouTube), бот автоматически рассчитывает битрейт, чтобы файл не превысил 50 МБ.
+
+Рекламный блок: В каждое описание видео автоматически добавляется подпись: 🚀 Скачано через: @youtodownloadbot.
