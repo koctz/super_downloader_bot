@@ -40,9 +40,13 @@ class VideoDownloader:
     # NORMALIZATION OF DOMAINS
     # -----------------------------
     def _normalize_url(self, url: str) -> str:
+        original = url
+
         url = url.replace("vk.ru", "vk.com")
         url = url.replace("vm.tiktok.com", "www.tiktok.com")
         url = url.replace("vt.tiktok.com", "www.tiktok.com")
+
+        print(f"DEBUG: Нормализованный URL: {original} → {url}")
         return url
 
     # -----------------------------
@@ -100,7 +104,6 @@ class VideoDownloader:
 
         file_size = os.path.getsize(input_path)
 
-        # Telegram limit 50 MB
         if file_size <= 48 * 1024 * 1024:
             cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-movflags", "faststart", output_path]
         else:
@@ -134,6 +137,8 @@ class VideoDownloader:
         url = self._normalize_url(url)
         opts = self._get_opts(url)
 
+        print(f"DEBUG: Начинаю yt-dlp загрузку: {url}")
+
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -157,6 +162,7 @@ class VideoDownloader:
                 )
 
         except Exception as e:
+            print(f"DEBUG ERROR: {e}")
             raise DownloadError(str(e))
 
     async def download(self, url: str) -> DownloadedVideo:
