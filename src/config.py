@@ -12,6 +12,8 @@ class Config:
     max_file_size: int
     channel_id: str   # Добавили ID канала
     channel_url: str  # Добавили ссылку на канал
+    admin_id: str  # Добавь это поле
+    users_db_path: str # Добавь путь к файлу пользователей
 
 # Проверка токена
 token = os.getenv("BOT_TOKEN")
@@ -28,7 +30,14 @@ conf = Config(
     max_file_size=50 * 1024 * 1024,
     channel_id=channel_id,
     channel_url=channel_url
+    admin_id=os.getenv("ADMIN_ID"),
+    users_db_path=os.path.join(os.getcwd(), "data", "users.txt") # Путь к файлу
 )
+
+# Автосоздание папки data
+data_dir = os.path.join(os.getcwd(), "data")
+if not os.path.exists(data_dir):
+    os.makedirs(data_dir)
 
 # Автосоздание папки загрузок
 if not os.path.exists(conf.download_path):
