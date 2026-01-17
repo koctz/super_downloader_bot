@@ -70,10 +70,13 @@ async def process_video_url(message: types.Message, state: FSMContext):
         [
             InlineKeyboardButton(text="🎬 Видео", callback_data="dl_video"),
             InlineKeyboardButton(text="🎵 Аудио (MP3)", callback_data="dl_audio")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_download")
         ]
     ])
     
-    await message.answer("Формат принят! Что именно скачиваем?", reply_markup=kb)
+    await message.answer("Сылка принята! Что именно скачиваем?", reply_markup=kb)
     await state.set_state(DownloadStates.choosing_format)
 
 # Обработка кнопки "Проверить подписку"
@@ -90,6 +93,22 @@ async def help_handler(callback: types.CallbackQuery):
     await callback.message.answer("Просто отправь ссылку на видео из TikTok, YT или Insta. Бот сам предложит варианты скачивания.")
     await callback.answer()
 
+@video_router.callback_query(F.data == "cancel_download")
+async def cancel_handler(callback: types.CallbackQuery, state: FSMContext):
+    # Очищаем данные и состояние
+    await state.clear()
+    
+    # Возвращаем пользователя в "главное меню" (как при /start)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Наш канал", url=conf.channel_url)],
+        [InlineKeyboardButton(text="🆘 Помощь", callback_data="help_info")]
+    ])
+    
+    await callback.message.edit_text(
+        "Действие отменено. Отправь мне новую ссылку, и я всё скачаю! 👇",
+        reply_markup=kb
+    )
+    await callback.answer()
 # Дальше идет твой стандартный handle_download (без изменений)
 @video_router.callback_query(F.data.startswith("dl_"))
 async def handle_download(callback: types.CallbackQuery, state: FSMContext):
