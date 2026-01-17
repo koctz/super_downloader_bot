@@ -25,7 +25,7 @@ Telegram-бот для скачивания видео и аудио из:
 
 Обновите систему и установите необходимые пакеты
 (FFmpeg обязателен):
-
+#
 sudo apt update && sudo apt upgrade -y
 sudo apt install python3-pip python3-venv ffmpeg git -y
 
