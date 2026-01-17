@@ -7,6 +7,24 @@ import aiohttp  # Нужно установить: pip install aiohttp
 from dataclasses import dataclass
 from src.config import conf
 
+async def download(self, url: str, mode: str = 'video') -> DownloadedVideo:
+    url = self._normalize_url(url)
+    unique_id = str(hash(url))[-8:]
+    temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
+
+    if "tiktok.com" in url:
+        data = await self._download_tiktok_via_api(url, temp_path)
+    else:
+        data = await asyncio.to_thread(self._download_sync, url, temp_path)
+
+    if mode == 'audio':
+        audio_path = self._process_audio(data.path)
+        data.path = audio_path
+        # Меняем расширение для корректного отображения размера
+        data.file_size = os.path.getsize(audio_path)
+    
+    return data
+
 class DownloadError(Exception):
     pass
 
