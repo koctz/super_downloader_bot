@@ -29,7 +29,7 @@ conf = Config(
     download_path=os.path.join(os.getcwd(), "downloads"),
     max_file_size=50 * 1024 * 1024,
     channel_id=channel_id,
-    channel_url=channel_url
+    channel_url=channel_url,
     admin_id=os.getenv("ADMIN_ID"),
     users_db_path=os.path.join(os.getcwd(), "data", "users.txt") # Путь к файлу
 )
