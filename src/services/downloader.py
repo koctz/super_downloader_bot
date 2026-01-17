@@ -26,11 +26,6 @@ class VideoDownloader:
     def __init__(self):
         self.download_path = conf.download_path
 
-        self.mobile_ua = (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) "
-            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
-        )
-
         self.desktop_ua = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -42,9 +37,14 @@ class VideoDownloader:
     def _normalize_url(self, url: str) -> str:
         original = url
 
+        # VK
         url = url.replace("vk.ru", "vk.com")
-        url = url.replace("vm.tiktok.com", "www.tiktok.com")
-        url = url.replace("vt.tiktok.com", "www.tiktok.com")
+
+        # YouTube Shorts → нормальный формат
+        if "youtube.com/shorts/" in url:
+            parts = url.split("youtube.com/shorts/")
+            video_id = parts[1].split("?")[0]
+            url = f"https://www.youtube.com/watch?v={video_id}"
 
         print(f"DEBUG: Нормализованный URL: {original} → {url}")
         return url
@@ -63,10 +63,11 @@ class VideoDownloader:
             "format": "mp4/best",
             "http_headers": {
                 "User-Agent": self.desktop_ua,
-                "Accept": "*/*",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
+            },
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android"]  # самый стабильный клиент
+                }
             }
         }
 
@@ -75,23 +76,6 @@ class VideoDownloader:
             cookies_path = os.path.join(os.getcwd(), "cookies_instagram.txt")
             if os.path.exists(cookies_path):
                 opts["cookiefile"] = cookies_path
-            opts["http_headers"]["Referer"] = "https://www.instagram.com/"
-
-        # TIKTOK (без cookies)
-        elif "tiktok.com" in url:
-            opts["http_headers"]["User-Agent"] = self.mobile_ua
-            opts["http_headers"]["Referer"] = "https://www.tiktok.com/"
-            opts["http_headers"]["sec-fetch-site"] = "same-origin"
-            opts["http_headers"]["sec-fetch-mode"] = "navigate"
-            opts["http_headers"]["sec-fetch-dest"] = "document"
-
-        # VK (публичные видео)
-        elif "vk.com" in url:
-            opts["http_headers"]["User-Agent"] = self.desktop_ua
-            opts["http_headers"]["Referer"] = "https://vk.com/"
-            opts["http_headers"]["sec-fetch-site"] = "same-origin"
-            opts["http_headers"]["sec-fetch-mode"] = "navigate"
-            opts["http_headers"]["sec-fetch-dest"] = "document"
 
         return opts
 
@@ -104,6 +88,7 @@ class VideoDownloader:
 
         file_size = os.path.getsize(input_path)
 
+        # Telegram limit 50 MB
         if file_size <= 48 * 1024 * 1024:
             cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-movflags", "faststart", output_path]
         else:
@@ -149,6 +134,8 @@ class VideoDownloader:
 
                 duration = info.get("duration", 0)
                 final_path = self._process_video(downloaded_path, duration)
+
+                print(f"DEBUG: Загрузка завершена. Файл: {final_path}, Размер: {os.path.getsize(final_path)}")
 
                 return DownloadedVideo(
                     path=final_path,
