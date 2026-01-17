@@ -35,7 +35,7 @@ sudo apt install python3-pip python3-venv ffmpeg git -y
 ### 2️⃣ Клонирование репозитория и установка зависимостей
 
 ```bash
-git clone https://github.com/ВАШ_АККАУНТ/super_downloader_bot.git
+git clone https://github.com/koctz/super_downloader_bot.git
 cd super_downloader_bot
 ```
 
