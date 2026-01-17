@@ -39,16 +39,12 @@ class VideoDownloader:
         return url
 
     def _process_audio(self, input_path):
-        """Извлечение аудио дорожки и конвертация в MP3"""
         base = os.path.basename(input_path)
         output_path = os.path.join(self.download_path, os.path.splitext(base)[0] + ".mp3")
         
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
-            "-vn", 
-            "-acodec", "libmp3lame",
-            "-q:a", "2", 
-            output_path
+            "-vn", "-acodec", "libmp3lame", "-q:a", "2", output_path
         ]
         
         subprocess.run(cmd, capture_output=True)
@@ -58,36 +54,45 @@ class VideoDownloader:
         return output_path
 
     def _process_video(self, input_path, duration):
-        """Финальная версия: исправляет растянутость и ориентацию видео"""
+        """Оптимизированная обработка: сжатие только при необходимости"""
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
             
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
+        
+        # Лимит Telegram для обычных ботов ~50MB. Берем запас (45MB)
+        MAX_SIZE = 45 * 1024 * 1024 
 
-        vf_params = "scale='trunc(oh*a/2)*2:720',setsar=1,format=yuv420p"
+        # Если файл небольшой, просто "причесываем" его без перекодировки (очень быстро)
+        if file_size <= MAX_SIZE:
+            print(f"DEBUG: Быстрая обработка (копирование): {input_path}")
+            cmd = [
+                "ffmpeg", "-y", "-i", input_path,
+                "-c", "copy", # Копируем потоки без нагрузки на CPU
+                "-map_metadata", "0", "-movflags", "faststart",
+                output_path
+            ]
+        else:
+            # Если файл большой — жмем по полной
+            print(f"DEBUG: Файл большой ({file_size//1048576}MB), начинаю сжатие...")
+            target_bitrate = int((MAX_SIZE * 8) / max(duration, 1))
+            # Уменьшаем битрейт на 10% для надежности
+            target_bitrate = int(target_bitrate * 0.9)
+            
+            cmd = [
+                "ffmpeg", "-y", "-i", input_path,
+                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", # 720p max
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-b:v", str(target_bitrate),
+                "-maxrate", str(target_bitrate),
+                "-bufsize", str(target_bitrate * 2),
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "faststart",
+                output_path
+            ]
 
-        cmd = [
-            "ffmpeg", "-y", 
-            "-display_rotation", "0", 
-            "-i", input_path,
-            "-vf", vf_params,
-            "-c:v", "libx264", 
-            "-preset", "ultrafast", 
-            "-crf", "23",
-            "-c:a", "aac", 
-            "-b:a", "128k",
-            "-movflags", "faststart", 
-            output_path
-        ]
-
-        if file_size > 48 * 1024 * 1024:
-            target_bitrate = int((42 * 1024 * 1024 * 8) / max(duration, 1))
-            cmd[12] = "-b:v"
-            cmd[13] = str(target_bitrate)
-
-        print(f"DEBUG: Обработка видео: {input_path}")
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if os.path.exists(input_path):
@@ -95,7 +100,8 @@ class VideoDownloader:
             except: pass
 
         if result.returncode != 0:
-            raise DownloadError(f"Ошибка FFmpeg")
+            print(f"FFMPEG ERROR: {result.stderr}")
+            raise DownloadError(f"Ошибка обработки видео")
 
         return output_path
 
@@ -111,8 +117,6 @@ class VideoDownloader:
                 video_url = data.get('play')
                 
                 async with session.get(video_url) as video_res:
-                    if video_res.status != 200:
-                        raise DownloadError("Не удалось скачать видео")
                     with open(temp_path, 'wb') as f:
                         f.write(await video_res.read())
 
@@ -131,8 +135,9 @@ class VideoDownloader:
                 )
 
     def _get_opts(self, url, filename_tmpl):
+        # Ограничиваем формат до 720p сразу при скачивании
         opts = {
-            'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
             'outtmpl': filename_tmpl,
             'noplaylist': True,
             'quiet': True,
@@ -140,13 +145,10 @@ class VideoDownloader:
             'geo_bypass': True,
             'nocheckcertificate': True,
             'user_agent': random.choice(self.user_agents),
-            'wait_for_video_data': 5,
         }
         if "instagram.com" in url:
             cookies_path = os.path.join(os.getcwd(), "cookies.txt")
-            if os.path.exists(cookies_path):
-                opts['cookiefile'] = cookies_path
-            opts['http_headers'] = {'Referer': 'https://www.instagram.com/', 'Origin': 'https://www.instagram.com'}
+            if os.path.exists(cookies_path): opts['cookiefile'] = cookies_path
         elif "youtube.com" in url or "youtu.be" in url:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
         return opts
@@ -156,11 +158,14 @@ class VideoDownloader:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_path = ydl.prepare_filename(info)
+            
+            # Фикс для случаев, когда yt-dlp меняет расширение
             if not os.path.exists(downloaded_path):
-                unique_id = temp_path_raw.split('raw_')[1].split('.')[0]
-                possible_files = [f for f in os.listdir(self.download_path) if unique_id in f]
-                if possible_files: downloaded_path = os.path.join(self.download_path, possible_files[0])
-                else: raise DownloadError("Файл не найден")
+                base_no_ext = os.path.splitext(downloaded_path)[0]
+                for ext in ['.mp4', '.mkv', '.webm']:
+                    if os.path.exists(base_no_ext + ext):
+                        downloaded_path = base_no_ext + ext
+                        break
 
             duration = info.get("duration", 0)
             final_path = self._process_video(downloaded_path, duration)
@@ -177,20 +182,16 @@ class VideoDownloader:
             )
 
     async def download(self, url: str, mode: str = 'video') -> DownloadedVideo:
-        """Главный метод: качает видео и, если нужно, превращает в аудио"""
         url = self._normalize_url(url)
-        unique_id = str(hash(url))[-8:]
+        unique_id = str(abs(hash(url)))[:8]
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
 
-        # 1. Сначала всегда получаем видео
         if "tiktok.com" in url:
             data = await self._download_tiktok_via_api(url, temp_path)
         else:
             data = await asyncio.to_thread(self._download_sync, url, temp_path)
 
-        # 2. Если пользователь нажал кнопку "Аудио" — конвертируем
         if mode == 'audio':
-            print(f"DEBUG: Конвертирую в аудио: {data.path}")
             audio_path = self._process_audio(data.path)
             data.path = audio_path
             data.file_size = os.path.getsize(audio_path)
