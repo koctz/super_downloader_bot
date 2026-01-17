@@ -76,7 +76,7 @@ async def process_video_url(message: types.Message, state: FSMContext):
         ]
     ])
     
-    await message.answer("Сылка принята! Что именно скачиваем?", reply_markup=kb)
+    await message.answer("Ссылка принята! Что именно скачиваем?", reply_markup=kb)
     await state.set_state(DownloadStates.choosing_format)
 
 # Обработка кнопки "Проверить подписку"
