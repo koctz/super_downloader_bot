@@ -7,9 +7,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 from src.services.downloader import VideoDownloader
 
-# Настройки (Замени на свои данные)
-CHANNEL_ID = "-100XXXXXXXXXX"  # ID твоего канала (начинается с -100)
-CHANNEL_URL = "https://t.me/твой_канал" # Ссылка на твой канал
+# Настройки 
+from src.config import conf
+
+CHANNEL_ID = conf.channel_id
+CHANNEL_URL = conf.channel_url
 
 video_router = Router()
 downloader = VideoDownloader()
