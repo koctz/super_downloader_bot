@@ -31,6 +31,7 @@ def register_user(user_id: int):
     user_id_str = str(user_id)
     # Создаем файл, если его нет
     if not os.path.exists(conf.users_db_path):
+        os.makedirs(os.path.dirname(conf.users_db_path), exist_ok=True)
         with open(conf.users_db_path, "w") as f:
             pass
             
@@ -52,11 +53,10 @@ async def is_subscribed(bot, user_id):
 
 @video_router.message(Command("broadcast"))
 async def start_broadcast(message: types.Message, state: FSMContext):
-    # Проверка, что пишет именно админ (ID из .env)
     if str(message.from_user.id) != str(conf.admin_id):
         return
 
-    await message.answer("Пришли сообщение для рассылки. Это может быть текст, фото или видео. Я просто скопирую его всем пользователям.")
+    await message.answer("Пришли сообщение для рассылки (текст, фото или видео).")
     await state.set_state(AdminStates.waiting_for_broadcast)
 
 @video_router.message(AdminStates.waiting_for_broadcast)
@@ -76,10 +76,9 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
 
     for user_id in user_ids:
         try:
-            # Метод copy_to просто дублирует любое сообщение
             await message.copy_to(chat_id=user_id)
             count += 1
-            await asyncio.sleep(0.05) # Защита от спам-фильтра ТГ
+            await asyncio.sleep(0.05) 
         except Exception:
             blocked += 1
 
@@ -89,7 +88,7 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
 
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message):
-    register_user(message.from_user.id) # Регистрация в базе
+    register_user(message.from_user.id)
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_URL)],
@@ -106,7 +105,7 @@ async def start_cmd(message: types.Message):
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
-    register_user(message.from_user.id) # Регистрация в базе
+    register_user(message.from_user.id)
     
     subscribed = await is_subscribed(message.bot, message.from_user.id)
     
@@ -175,15 +174,23 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         return
 
     mode = callback.data.split("_")[1]
-    status_msg = await callback.message.edit_text("⏳ Начинаю работу...")
+    # ЭТАП 1
+    status_msg = await callback.message.edit_text("⏳ [1/4] Анализирую ссылку...")
     
     video_path = None
     try:
         action = ChatActionSender.upload_video if mode == 'video' else ChatActionSender.upload_document
         async with action(chat_id=callback.message.chat.id, bot=callback.bot):
+            # ЭТАП 2
+            await status_msg.edit_text("📥 [2/4] Загружаю файл на сервер...")
             video_data = await downloader.download(url, mode=mode)
             video_path = video_data.path
-            await status_msg.edit_text("⬆️ Отправляю...")
+            
+            # ЭТАП 3
+            await status_msg.edit_text("⚙️ [3/4] Обрабатываю и сжимаю видео...")
+            
+            # ЭТАП 4
+            await status_msg.edit_text("📤 [4/4] Отправляю файл тебе...")
             file = FSInputFile(video_path)
             
             if mode == 'video':
