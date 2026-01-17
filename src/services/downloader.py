@@ -37,6 +37,7 @@ class VideoDownloader:
         )
 
     def _get_opts(self, url):
+        # Базовые опции
         opts = {
             "outtmpl": os.path.join(self.download_path, "raw_%(id)s.%(ext)s"),
             "noplaylist": True,
@@ -44,27 +45,43 @@ class VideoDownloader:
             "no_warnings": True,
             "geo_bypass": True,
             "nocheckcertificate": True,
+            "format": "mp4/best",
             "http_headers": {
                 "User-Agent": self.desktop_ua,
+                "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
-            },
-            "format": "mp4/best",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+            }
         }
 
-        # INSTAGRAM — нужен cookiefile
+        # INSTAGRAM
         if "instagram.com" in url:
             cookies_path = os.path.join(os.getcwd(), "cookies_instagram.txt")
             if os.path.exists(cookies_path):
                 opts["cookiefile"] = cookies_path
+
             opts["http_headers"]["Referer"] = "https://www.instagram.com/"
 
-        # TIKTOK — мобильный UA + реальный extractor
+        # TIKTOK
         elif "tiktok.com" in url:
             opts["http_headers"]["User-Agent"] = self.mobile_ua
             opts["http_headers"]["Referer"] = "https://www.tiktok.com/"
+            opts["http_headers"]["sec-fetch-site"] = "same-origin"
+            opts["http_headers"]["sec-fetch-mode"] = "navigate"
+            opts["http_headers"]["sec-fetch-dest"] = "document"
+
             cookies_path = os.path.join(os.getcwd(), "cookies_tiktok.txt")
             if os.path.exists(cookies_path):
                 opts["cookiefile"] = cookies_path
+
+        # VKONTAKTE (публичные видео)
+        elif "vk.com" in url:
+            opts["http_headers"]["User-Agent"] = self.desktop_ua
+            opts["http_headers"]["Referer"] = "https://vk.com/"
+            opts["http_headers"]["sec-fetch-site"] = "same-origin"
+            opts["http_headers"]["sec-fetch-mode"] = "navigate"
+            opts["http_headers"]["sec-fetch-dest"] = "document"
 
         return opts
 
