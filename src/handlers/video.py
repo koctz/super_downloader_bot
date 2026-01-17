@@ -106,28 +106,20 @@ async def is_subscribed(bot, user_id):
 
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
+    # Очищаем состояние принудительно, чтобы кнопки появились
+    await state.clear()
     register_user(message.from_user.id)
-    user_data = await state.get_data()
-    lang = user_data.get("lang")
-
-    if not lang:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
-                InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
-            ]
-        ])
-        await message.answer(STRINGS["ru"]["start"], reply_markup=kb)
-        await state.set_state(DownloadStates.choosing_language)
-    else:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
-            [
-                InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info"),
-                InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="open_settings")
-            ]
-        ])
-        await message.answer(STRINGS[lang]["welcome"], parse_mode="HTML", reply_markup=kb)
+    
+    # Всегда предлагаем выбор языка при команде /start для сброса настроек
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
+            InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
+        ]
+    ])
+    
+    await message.answer(STRINGS["ru"]["start"], reply_markup=kb)
+    await state.set_state(DownloadStates.choosing_language)
 
 @video_router.callback_query(F.data == "open_settings")
 async def open_settings(callback: types.CallbackQuery, state: FSMContext):
