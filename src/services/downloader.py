@@ -54,46 +54,51 @@ class VideoDownloader:
         return output_path
 
     def _process_video(self, input_path, duration):
+        """Раздельная логика: быстро для всех, глубоко для Instagram"""
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
             
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
-        
-        # Лимит 50МБ, ставим 46МБ для запаса
         MAX_SIZE_BYTES = 46 * 1024 * 1024 
-        is_insta = "instagram" in input_path.lower() or "reels" in input_path.lower()
 
-        # Если видео легкое и не из Инсты - копируем мгновенно
+        # ПРОВЕРКА: Это Instagram?
+        # Ищем упоминание instagram или reels в названии файла или пути
+        is_insta = "instagram" in input_path.lower() or "reels" in input_path.lower() or "insta" in base.lower()
+
+        # ЕСЛИ ЭТО НЕ ИНСТАГРАМ И ФАЙЛ ПРОХОДИТ ПО ВЕСУ — КОПИРУЕМ МГНОВЕННО
         if file_size <= MAX_SIZE_BYTES and not is_insta:
-            print(f"DEBUG: Быстрая перепаковка: {input_path}")
+            print(f"DEBUG: Быстрая перепаковка (YouTube/TikTok/VK): {input_path}")
             cmd = [
                 "ffmpeg", "-y", "-i", input_path,
                 "-c", "copy", "-map_metadata", "0",
                 "-movflags", "+faststart", output_path
             ]
         else:
-            # Для тяжелых видео или Инстаграма - жмем
-            print(f"DEBUG: Сжатие/Оптимизация видео ({file_size // 1048576} MB)")
+            # ЕСЛИ ЭТО ИНСТАГРАМ ИЛИ ТЯЖЕЛЫЙ ФАЙЛ — ДЕЛАЕМ ГЛУБОКУЮ ПЕРЕПАКОВКУ
+            print(f"DEBUG: Глубокая обработка (Instagram или сжатие): {input_path}")
             
-            # РАССЧЕТ БИТРЕЙТА для длинных видео (чтобы влезло в 46МБ)
-            # Формула: (Размер в битах / длительность) - битрейт звука
+            # Рассчитываем битрейт, чтобы влезть в лимит
             target_total_bitrate = int((MAX_SIZE_BYTES * 8) / max(duration, 1))
-            video_bitrate = int(target_total_bitrate * 0.85) # оставляем 15% на звук и метаданные
+            video_bitrate = int(target_total_bitrate * 0.85)
             
             cmd = [
                 "ffmpeg", "-y", "-i", input_path,
-                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", # Ограничение 720p
+                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", # 720p
                 "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-pix_fmt", "yuv420p",
-                "-r", "30",
-                "-c:a", "aac", "-b:a", "96k", # Чуть снижаем звук для экономии места
+                "-preset", "ultrafast",       # Чтобы хоть чуть-чуть ускорить процесс
+                "-pix_fmt", "yuv420p",        # КРИТИЧНО для iPhone
+                "-r", "30",                   # КРИТИЧНО для застывших кадров Insta
+                "-vsync", "cfr",              # КРИТИЧНО для синхронизации кадров
+                "-profile:v", "main",         # Совместимость со старыми iPhone
+                "-level", "3.1",
+                "-c:a", "aac", "-b:a", "128k",
                 "-movflags", "+faststart",
+                "-video_track_timescale", "30000" # Фикс таймстемпов Insta
             ]
 
-            # Если файл реально большой, принудительно ограничиваем битрейт
+            # Если файл действительно слишком большой, добавляем ограничение битрейта
             if file_size > MAX_SIZE_BYTES:
                 cmd.extend([
                     "-b:v", str(video_bitrate),
@@ -103,12 +108,11 @@ class VideoDownloader:
             
             cmd.append(output_path)
 
-        # Увеличиваем время ожидания для тяжелых файлов (timeout 300 сек)
+        # Выполняем команду
         try:
             subprocess.run(cmd, capture_output=True, timeout=300)
         except subprocess.TimeoutExpired:
-            print("ERROR: FFmpeg работал слишком долго и был остановлен")
-            raise DownloadError("Видео слишком длинное, сервер не успел его обработать.")
+            raise DownloadError("Видео слишком длинное для обработки сервером.")
 
         if os.path.exists(input_path):
             try: os.remove(input_path)
