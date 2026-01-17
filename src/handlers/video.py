@@ -1,50 +1,76 @@
 import os
-import logging
 from aiogram import Router, types, F
-from aiogram.types import FSInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.utils.chat_action import ChatActionSender
-from src.services.downloader import VideoDownloader, DownloadError
+from src.services.downloader import VideoDownloader
 
 video_router = Router()
 downloader = VideoDownloader()
 
+# Обработка ссылки: показываем кнопки
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message):
-    status_msg = await message.answer("⏳ Начинаю работу...")
     url = message.text.strip()
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎬 Видео", callback_data=f"dl_video_{url}"),
+            InlineKeyboardButton(text="🎵 Аудио (MP3)", callback_data=f"dl_audio_{url}")
+        ]
+    ])
+    
+    await message.answer("Что скачать?", reply_markup=kb)
+
+# Обработка нажатия кнопок
+@video_router.callback_query(F.data.startswith("dl_"))
+async def handle_download(callback: types.CallbackQuery):
+    # Разделяем тип загрузки и URL
+    # dl_video_https://... -> mode='video', url='https://...'
+    data = callback.data.split("_")
+    mode = data[1] # video или audio
+    url = "_".join(data[2:]) # На случай если в URL есть подчеркивания
+    
+    status_msg = await callback.message.edit_text("⏳ Начинаю работу...")
     video_path = None
     
     try:
-        async with ChatActionSender.upload_video(chat_id=message.chat.id, bot=message.bot):
-            print(f"DEBUG: Начинаю загрузку {url}")
-            await status_msg.edit_text("⬇️ Скачиваю и подготавливаю видео...")
+        # Выбираем действие для ChatAction
+        action = ChatActionSender.upload_video if mode == 'video' else ChatActionSender.upload_document
+        
+        async with action(chat_id=callback.message.chat.id, bot=callback.bot):
+            await status_msg.edit_text(f"⬇️ Скачиваю {'видео' if mode == 'video' else 'аудио'}...")
             
-            video_data = await downloader.download(url)
+            # В downloader.download нужно добавить поддержку mode (сделаем в шаге 2)
+            video_data = await downloader.download(url, mode=mode)
             video_path = video_data.path
-            
-            print(f"DEBUG: Загрузка завершена. Файл: {video_path}, Размер: {video_data.file_size}")
 
-            # КРИТИЧЕСКАЯ ПРОВЕРКА: Telegram не примет файл больше 50МБ (52428800 байт)
             if video_data.file_size > 52428800:
-                print("DEBUG: Файл слишком большой для Telegram")
-                await status_msg.edit_text(f"❌ Файл слишком тяжелый ({video_data.file_size // 1048576} MB). Лимит Telegram для ботов — 50 MB.")
+                await status_msg.edit_text("❌ Файл слишком тяжелый для Telegram (лимит 50MB).")
                 return
 
-            await status_msg.edit_text(f"⬆️ Отправляю в Telegram ({video_data.file_size // 1048576} MB)...")
-            print("DEBUG: Отправка video_file в Telegram API...")
+            await status_msg.edit_text("⬆️ Отправляю файл...")
+            file = FSInputFile(video_path)
             
-            video_file = FSInputFile(video_path)
+            if mode == 'video':
+                await callback.message.answer_video(
+                    video=file,
+                    caption=f"🎬 <b>{video_data.title}</b>",
+                    parse_mode="HTML",
+                    width=video_data.width,
+                    height=video_data.height,
+                    duration=video_data.duration,
+                    supports_streaming=True
+                )
+            else:
+                await callback.message.answer_audio(
+                    audio=file,
+                    caption=f"🎵 <b>{video_data.title}</b>",
+                    parse_mode="HTML",
+                    title=video_data.title,
+                    performer=video_data.author,
+                    duration=video_data.duration
+                )
             
-            await message.answer_video(
-                video=video_file,
-                caption=f"🎬 <b>{video_data.title}</b>\n👤 {video_data.author}",
-                parse_mode="HTML",
-                width=video_data.width,
-                height=video_data.height,
-                duration=video_data.duration,
-                supports_streaming=True
-            )
-            print("DEBUG: Видео успешно отправлено!")
             await status_msg.delete()
 
     except Exception as e:
