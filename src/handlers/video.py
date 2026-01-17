@@ -2,53 +2,59 @@ import os
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.utils.chat_action import ChatActionSender
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from src.services.downloader import VideoDownloader
 
 video_router = Router()
 downloader = VideoDownloader()
 
-# Обработка ссылки: показываем кнопки
+# Состояния для хранения ссылки
+class DownloadStates(StatesGroup):
+    choosing_format = State()
+
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
-async def process_video_url(message: types.Message):
+async def process_video_url(message: types.Message, state: FSMContext):
     url = message.text.strip()
     
+    # Сохраняем URL в память FSM
+    await state.update_data(download_url=url)
+    
+    # Теперь в callback_data передаем только короткое действие
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎬 Видео", callback_data=f"dl_video_{url}"),
-            InlineKeyboardButton(text="🎵 Аудио (MP3)", callback_data=f"dl_audio_{url}")
+            InlineKeyboardButton(text="🎬 Видео", callback_data="dl_video"),
+            InlineKeyboardButton(text="🎵 Аудио (MP3)", callback_data="dl_audio")
         ]
     ])
     
     await message.answer("Что скачать?", reply_markup=kb)
+    await state.set_state(DownloadStates.choosing_format)
 
-# Обработка нажатия кнопок
 @video_router.callback_query(F.data.startswith("dl_"))
-async def handle_download(callback: types.CallbackQuery):
-    # Разделяем тип загрузки и URL
-    # dl_video_https://... -> mode='video', url='https://...'
-    data = callback.data.split("_")
-    mode = data[1] # video или audio
-    url = "_".join(data[2:]) # На случай если в URL есть подчеркивания
+async def handle_download(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем URL из памяти
+    user_data = await state.get_data()
+    url = user_data.get("download_url")
     
+    if not url:
+        await callback.answer("Ошибка: ссылка потерялась. Пришли её ещё раз.", show_alert=True)
+        return
+
+    mode = callback.data.split("_")[1] # video или audio
     status_msg = await callback.message.edit_text("⏳ Начинаю работу...")
-    video_path = None
     
+    video_path = None
     try:
-        # Выбираем действие для ChatAction
         action = ChatActionSender.upload_video if mode == 'video' else ChatActionSender.upload_document
         
         async with action(chat_id=callback.message.chat.id, bot=callback.bot):
-            await status_msg.edit_text(f"⬇️ Скачиваю {'видео' if mode == 'video' else 'аудио'}...")
+            await status_msg.edit_text(f"⬇️ Скачиваю {mode}...")
             
-            # В downloader.download нужно добавить поддержку mode (сделаем в шаге 2)
             video_data = await downloader.download(url, mode=mode)
             video_path = video_data.path
 
-            if video_data.file_size > 52428800:
-                await status_msg.edit_text("❌ Файл слишком тяжелый для Telegram (лимит 50MB).")
-                return
-
-            await status_msg.edit_text("⬆️ Отправляю файл...")
+            await status_msg.edit_text("⬆️ Отправляю...")
             file = FSInputFile(video_path)
             
             if mode == 'video':
@@ -72,6 +78,8 @@ async def handle_download(callback: types.CallbackQuery):
                 )
             
             await status_msg.delete()
+            # Очищаем состояние после успешной загрузки
+            await state.clear()
 
     except Exception as e:
         print(f"DEBUG ERROR: {str(e)}")
@@ -79,4 +87,5 @@ async def handle_download(callback: types.CallbackQuery):
             
     finally:
         if video_path and os.path.exists(video_path):
-            os.remove(video_path)
+            try: os.remove(video_path)
+            except: pass
