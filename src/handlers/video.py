@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logging
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.utils.chat_action import ChatActionSender
@@ -10,6 +11,10 @@ from src.services.downloader import VideoDownloader
 
 # Настройки 
 from src.config import conf
+
+# Настройка логирования, чтобы видеть ошибки кнопок в консоли
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 CHANNEL_ID = conf.channel_id
 CHANNEL_URL = conf.channel_url
@@ -34,48 +39,47 @@ STRINGS = {
         "btn_video": "🎬 Видео",
         "btn_audio": "🎵 Аудио (MP3)",
         "btn_cancel": "❌ Отмена",
-        "cancel_msg": "Действие отменено. Отправь мне новую ссылку, и я всё скачаю! 👇",
-        "step_1": "⏳ [1/4] Анализирую ссылку...",
-        "step_2": "📥 [2/4] Загружаю файл на сервер...",
-        "step_3": "⚙️ [3/4] Обрабатываю и сжимаю...",
-        "step_4": "📤 [4/4] Отправляю файл тебе...",
+        "cancel_msg": "Действие отменено. Отправь мне новую ссылку!",
+        "step_1": "⏳ Анализирую...",
+        "step_2": "📥 Загружаю...",
+        "step_3": "⚙️ Обрабатываю...",
+        "step_4": "📤 Отправляю...",
         "promo": "🚀 <b>Скачано через: @youtodownloadbot</b>",
-        "err_lost": "Ошибка: ссылка потерялась. Пришли её ещё раз.",
-        "err_large": "❌ Видео слишком тяжелое для Telegram (даже после сжатия).",
-        "err_timeout": "❌ Видео обрабатывалось слишком долго. Попробуй другое.",
-        "err_sub": "❌ Ты всё еще не подписан!",
-        "sub_ok": "✅ Спасибо за подписку! Теперь можешь отправлять ссылки."
+        "err_lost": "Ошибка: ссылка потерялась.",
+        "err_large": "❌ Видео слишком тяжелое.",
+        "err_timeout": "❌ Время вышло.",
+        "err_sub": "❌ Ты не подписан!",
+        "sub_ok": "✅ Подписка подтверждена!"
     },
     "en": {
         "start": "Choose language / Выберите язык:",
-        "welcome": "Hello! 👋\nI can help you download videos from <b>TikTok, YouTube, Instagram, or VK</b>.\nJust send me a link!",
-        "sub_required": "⚠️ <b>You must subscribe to our channel to use the bot!</b>\n\nThis helps us keep the server running.",
+        "welcome": "Hello! 👋\nI can download from <b>TikTok, YouTube, Instagram, or VK</b>.\nSend me a link!",
+        "sub_required": "⚠️ <b>Subscribe to our channel to use the bot!</b>",
         "subscribe": "✅ Subscribe",
         "check_sub": "🔄 Check Subscription",
         "btn_channel": "📢 Our Channel",
         "btn_help": "🆘 Help",
         "btn_settings": "⚙️ Settings",
-        "settings_msg": "Here you can change the bot's language:",
-        "help_msg": "Just send a video link from TikTok, YT, or Insta. The bot will offer download options.",
-        "link_received": "Link received! What would you like to download?",
+        "settings_msg": "Choose language:",
+        "help_msg": "Send a link from TikTok, YT, or Insta.",
+        "link_received": "Link received! Choose format:",
         "btn_video": "🎬 Video",
         "btn_audio": "🎵 Audio (MP3)",
         "btn_cancel": "❌ Cancel",
-        "cancel_msg": "Action canceled. Send me a new link and I'll download it! 👇",
-        "step_1": "⏳ [1/4] Analyzing link...",
-        "step_2": "📥 [2/4] Downloading to server...",
-        "step_3": "⚙️ [3/4] Processing and compressing...",
-        "step_4": "📤 [4/4] Sending file to you...",
-        "promo": "🚀 <b>Downloaded via: @youtodownloadbot</b>",
-        "err_lost": "Error: link lost. Please send it again.",
-        "err_large": "❌ Video is too heavy for Telegram (even after compression).",
-        "err_timeout": "❌ Processing took too long. Try a shorter video.",
-        "err_sub": "❌ You are still not subscribed!",
-        "sub_ok": "✅ Thanks for subscribing! Now you can send links."
+        "cancel_msg": "Canceled. Send a new link!",
+        "step_1": "⏳ Analyzing...",
+        "step_2": "📥 Downloading...",
+        "step_3": "⚙️ Processing...",
+        "step_4": "📤 Sending...",
+        "promo": "🚀 <b>Via: @youtodownloadbot</b>",
+        "err_lost": "Error: link lost.",
+        "err_large": "❌ File too large.",
+        "err_timeout": "❌ Timeout.",
+        "err_sub": "❌ Not subscribed!",
+        "sub_ok": "✅ Subscribed!"
     }
 }
 
-# Состояния
 class DownloadStates(StatesGroup):
     choosing_language = State()
     choosing_format = State()
@@ -84,33 +88,34 @@ class AdminStates(StatesGroup):
     waiting_for_broadcast = State()
 
 # --- СЛУЖЕБНЫЕ ФУНКЦИИ ---
-
 def register_user(user_id: int):
-    user_id_str = str(user_id)
-    if not os.path.exists(conf.users_db_path):
+    try:
+        user_id_str = str(user_id)
         os.makedirs(os.path.dirname(conf.users_db_path), exist_ok=True)
-        with open(conf.users_db_path, "w") as f: pass
-    with open(conf.users_db_path, "r") as f:
-        users = f.read().splitlines()
-    if user_id_str not in users:
-        with open(conf.users_db_path, "a") as f:
-            f.write(user_id_str + "\n")
+        if not os.path.exists(conf.users_db_path):
+            open(conf.users_db_path, 'a').close()
+        with open(conf.users_db_path, "r") as f:
+            users = f.read().splitlines()
+        if user_id_str not in users:
+            with open(conf.users_db_path, "a") as f:
+                f.write(user_id_str + "\n")
+    except Exception as e:
+        logger.error(f"Error registering user: {e}")
 
 async def is_subscribed(bot, user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except Exception: return False
+    except: return False
 
 # --- ХЕНДЛЕРЫ ---
 
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
-    # Очищаем состояние принудительно, чтобы кнопки появились
     await state.clear()
     register_user(message.from_user.id)
     
-    # Всегда предлагаем выбор языка при команде /start для сброса настроек
+    # Создаем клавиатуру БЕЗ ссылок для теста (только callback)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
@@ -118,8 +123,12 @@ async def start_cmd(message: types.Message, state: FSMContext):
         ]
     ])
     
-    await message.answer(STRINGS["ru"]["start"], reply_markup=kb)
-    await state.set_state(DownloadStates.choosing_language)
+    try:
+        await message.answer(STRINGS["ru"]["start"], reply_markup=kb)
+        await state.set_state(DownloadStates.choosing_language)
+    except Exception as e:
+        logger.error(f"FAIL TO SEND KEYBOARD: {e}")
+        await message.answer(f"Ошибка кнопок: {e}")
 
 @video_router.callback_query(F.data == "open_settings")
 async def open_settings(callback: types.CallbackQuery, state: FSMContext):
@@ -149,11 +158,10 @@ async def set_language(callback: types.CallbackQuery, state: FSMContext):
     ])
     await callback.message.edit_text(STRINGS[lang]["welcome"], parse_mode="HTML", reply_markup=kb)
     await state.set_state(None)
-    await callback.answer(f"Language: {lang.upper()}")
+    await callback.answer()
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
-    register_user(message.from_user.id)
     data = await state.get_data()
     lang = data.get("lang", "ru")
     
@@ -227,39 +235,31 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
             await status_msg.edit_text(STRINGS[lang]["step_2"])
             video_data = await downloader.download(url, mode=mode)
             video_path = video_data.path
-            
             await status_msg.edit_text(STRINGS[lang]["step_3"])
             await status_msg.edit_text(STRINGS[lang]["step_4"])
             
             file = FSInputFile(video_path)
             promo = f"\n\n{STRINGS[lang]['promo']}"
-            clean_title = video_data.title[:900]
             
             if mode == 'video':
                 await callback.message.answer_video(
-                    video=file, caption=f"🎬 <b>{clean_title}</b>{promo}",
+                    video=file, caption=f"🎬 <b>{video_data.title[:900]}</b>{promo}",
                     parse_mode="HTML", width=video_data.width, height=video_data.height,
-                    duration=video_data.duration, supports_streaming=True, request_timeout=300
+                    duration=video_data.duration, supports_streaming=True
                 )
             else:
                 await callback.message.answer_audio(
-                    audio=file, caption=f"🎵 <b>{clean_title}</b>{promo}",
-                    parse_mode="HTML", title=video_data.title, performer=video_data.author,
-                    duration=video_data.duration, request_timeout=300
+                    audio=file, caption=f"🎵 <b>{video_data.title[:900]}</b>{promo}",
+                    parse_mode="HTML", title=video_data.title, duration=video_data.duration
                 )
             await status_msg.delete()
-            await state.set_state(None)
             
     except Exception as e:
-        err_text = str(e)
-        if "Request Entity Too Large" in err_text: msg = STRINGS[lang]["err_large"]
-        elif "Timeout" in err_text: msg = STRINGS[lang]["err_timeout"]
-        else: msg = f"❌ {err_text[:100]}"
-        await status_msg.edit_text(msg)
+        logger.error(f"Download error: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:50]}")
     finally:
         if video_path and os.path.exists(video_path):
-            try: os.remove(video_path)
-            except: pass
+            os.remove(video_path)
 
 @video_router.message(Command("broadcast"))
 async def start_broadcast(message: types.Message, state: FSMContext):
@@ -270,14 +270,12 @@ async def start_broadcast(message: types.Message, state: FSMContext):
 @video_router.message(AdminStates.waiting_for_broadcast)
 async def perform_broadcast(message: types.Message, state: FSMContext):
     await state.clear()
-    if not os.path.exists(conf.users_db_path): return
     with open(conf.users_db_path, "r") as f: user_ids = f.read().splitlines()
-    count, blocked = 0, 0
-    status_msg = await message.answer(f"🚀 Рассылка на {len(user_ids)}...")
+    count = 0
     for user_id in user_ids:
         try:
             await message.copy_to(chat_id=user_id)
             count += 1
             await asyncio.sleep(0.05)
-        except: blocked += 1
-    await status_msg.edit_text(f"✅ Готово! Успешно: {count}, Блок: {blocked}")
+        except: pass
+    await message.answer(f"✅ Рассылка завершена! Получили: {count}")
