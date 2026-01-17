@@ -23,23 +23,32 @@ class DownloadedVideo:
 class VideoDownloader:
     def __init__(self):
         self.download_path = conf.download_path
+        # Список разных User-Agents для обхода блокировок
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         ]
 
     def _normalize_url(self, url: str) -> str:
+        """Очистка и приведение ссылок к стандартному виду"""
         url = url.strip()
         if "vk.ru" in url: url = url.replace("vk.ru", "vk.com")
+        
+        # YouTube Shorts -> Watch URL
         if "youtube.com/shorts/" in url:
             video_id = url.split("shorts/")[1].split("?")[0]
             url = f"https://www.youtube.com/watch?v={video_id}"
+            
+        # Очистка TikTok от лишних параметров трекинга
+        if "tiktok.com" in url and "?" in url:
+            url = url.split("?")[0]
+            
         return url
 
     def _get_opts(self, url, filename_tmpl):
-        # Базовые настройки для всех сайтов
+        """Индивидуальные настройки для каждого сервиса"""
+        # Базовый конфиг (агрессивный мобильный User-Agent лучше всего для TikTok)
         opts = {
             'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'outtmpl': filename_tmpl,
@@ -48,11 +57,10 @@ class VideoDownloader:
             'no_warnings': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
-            'user_agent': random.choice(self.user_agents),
-            'wait_for_video_data': 5,
+            'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
         }
 
-        # Настройки для INSTAGRAM (требует куки и реферер)
+        # 1. Настройки для INSTAGRAM
         if "instagram.com" in url:
             cookies_path = os.path.join(os.getcwd(), "cookies.txt")
             if os.path.exists(cookies_path):
@@ -62,20 +70,23 @@ class VideoDownloader:
                 'Origin': 'https://www.instagram.com',
             }
 
-        # Настройки для TIKTOK (аккаунт не нужен, нужны спец. аргументы)
+        # 2. Настройки для TIKTOK (Изоляция от куков и спец. заголовки)
         elif "tiktok.com" in url:
+            opts['cookiefile'] = None  # Критично: не шлем куки инсты в тикток
+            opts['http_headers'] = {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            }
             opts['extractor_args'] = {'tiktok': {'webpage_download': True}}
-            # Для тиктока часто лучше использовать мобильный UA
-            opts['user_agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1'
 
-        # Настройки для YOUTUBE
+        # 3. Настройки для YOUTUBE
         elif "youtube.com" in url or "youtu.be" in url:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
 
         return opts
 
     def _process_video(self, input_path, duration):
-        """Обработка FFmpeg: сжатие под лимит 50МБ и исправление формата"""
+        """Оптимизация видео для Telegram через FFmpeg"""
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
@@ -83,10 +94,9 @@ class VideoDownloader:
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
 
-        # Если файл больше 48МБ, сжимаем
+        # Если файл > 48МБ — жесткое сжатие под лимит Telegram (50МБ)
         if file_size > 48 * 1024 * 1024:
-            target_bitrate = int((43 * 1024 * 1024 * 8) / max(duration, 1))
-            print(f"DEBUG: Файл большой ({file_size}), сжимаем до битрейта {target_bitrate}")
+            target_bitrate = int((42 * 1024 * 1024 * 8) / max(duration, 1))
             cmd = [
                 "ffmpeg", "-y", "-i", input_path,
                 "-c:v", "libx264", "-preset", "ultrafast", "-b:v", str(target_bitrate),
@@ -94,8 +104,7 @@ class VideoDownloader:
                 "-movflags", "faststart", output_path
             ]
         else:
-            # Даже если размер норм, пересобираем для iPhone (pix_fmt yuv420p)
-            print(f"DEBUG: Копируем/быстрая обработка")
+            # Все равно пересобираем в yuv420p (для iOS/Android совместимости)
             cmd = [
                 "ffmpeg", "-y", "-i", input_path,
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
@@ -123,17 +132,15 @@ class VideoDownloader:
 
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
-                print(f"DEBUG: Начинаю yt-dlp загрузку: {url}")
+                print(f"DEBUG: Старт загрузки: {url}")
                 info = ydl.extract_info(url, download=True)
                 downloaded_path = ydl.prepare_filename(info)
 
-                # Иногда yt-dlp меняет расширение в процессе
+                # Проверка на смену расширения (например, .mkv -> .mp4)
                 if not os.path.exists(downloaded_path):
-                    possible_files = [f for f in os.listdir(self.download_path) if unique_id in f]
-                    if possible_files:
-                        downloaded_path = os.path.join(self.download_path, possible_files[0])
-                    else:
-                        raise DownloadError("Файл не найден после загрузки")
+                    files = [f for f in os.listdir(self.download_path) if unique_id in f]
+                    if files: downloaded_path = os.path.join(self.download_path, files[0])
+                    else: raise DownloadError("File not found")
 
                 duration = info.get("duration", 0)
                 final_path = self._process_video(downloaded_path, duration)
