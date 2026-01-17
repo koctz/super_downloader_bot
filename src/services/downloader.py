@@ -54,56 +54,50 @@ class VideoDownloader:
         return output_path
 
     def _process_video(self, input_path, duration):
-        """Исправленная версия: гарантирует совместимость с iPhone"""
+        """Бронебойная версия: полное исправление для iPhone и Instagram"""
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
             
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
-        
-        # Лимит Telegram ~50MB.
         MAX_SIZE = 45 * 1024 * 1024 
 
-        # Проверяем, инстаграм ли это (инстаграм чаще всего дает несовместимый HEVC)
-        is_instagram = "final_instagram" in base or "raw_" in input_path # можно уточнить логику
+        print(f"DEBUG: Глубокая обработка для iOS: {input_path}")
+        
+        # Базовый набор команд для максимальной совместимости
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", # Масштаб до 720p
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p",        # Цветовое пространство iPhone
+            "-r", "30",                   # Принудительные 30 кадров/сек (убирает фризы)
+            "-g", "60",                   # Интервал ключевых кадров
+            "-keyint_min", "2",
+            "-vsync", "cfr",              # Принудительная синхронизация кадров
+            "-profile:v", "main",
+            "-level", "3.1",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "44100",               # Частота дискретизации звука
+            "-movflags", "+faststart",    # Позволяет смотреть видео до полной загрузки
+            "-video_track_timescale", "30000", # Исправляет таймстемпы Instagram
+            output_path
+        ]
 
-        # Если файл небольшой И это не инстаграм — копируем
-        # НО: лучше для надежности инстаграм всегда перекодировать
-        if file_size <= MAX_SIZE and not ("instagram" in input_path.lower()):
-            print(f"DEBUG: Быстрая обработка (копирование): {input_path}")
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-c", "copy",
-                "-map_metadata", "0", 
-                "-pix_fmt", "yuv420p", # Добавляем для совместимости
-                "-movflags", "faststart",
-                output_path
-            ]
-        else:
-            # Для больших файлов или Instagram — полная перекодировка
-            print(f"DEBUG: Полная обработка для совместимости с iOS: {input_path}")
-            
-            # Базовые параметры
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1",
-                "-c:v", "libx264", 
-                "-preset", "ultrafast",
-                "-pix_fmt", "yuv420p", # КРИТИЧНО ДЛЯ iPHONE
-                "-profile:v", "main",   # Гарантирует чтение на старых iOS
-                "-level", "3.1",
-                "-c:a", "aac", 
-                "-b:a", "128k",
-                "-movflags", "faststart",
-                output_path
-            ]
-
-            # Если всё еще слишком большой — ограничиваем битрейт
-            if file_size > MAX_SIZE:
-                target_bitrate = int((MAX_SIZE * 8) / max(duration, 1))
-                target_bitrate = int(target_bitrate * 0.85)
-                cmd.extend(["-b:v", str(target_bitrate), "-maxrate", str(target_bitrate), "-bufsize", str(target_bitrate * 2)])
+        # Если файл слишком большой, вставляем параметры битрейта ПЕРЕД output_path
+        if file_size > MAX_SIZE:
+            target_bitrate = int((MAX_SIZE * 8) / max(duration, 1))
+            target_bitrate = int(target_bitrate * 0.8)
+            # Вставляем параметры битрейта перед последним элементом (путем вывода)
+            cmd.insert(-1, "-b:v")
+            cmd.insert(-1, str(target_bitrate))
+            cmd.insert(-1, "-maxrate")
+            cmd.insert(-1, str(target_bitrate))
+            cmd.insert(-1, "-bufsize")
+            cmd.insert(-1, str(target_bitrate * 2))
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         
@@ -113,10 +107,10 @@ class VideoDownloader:
 
         if result.returncode != 0:
             print(f"FFMPEG ERROR: {result.stderr}")
-            raise DownloadError(f"Ошибка обработки видео")
+            raise DownloadError(f"Ошибка FFmpeg: {result.stderr[:100]}")
 
         return output_path
-
+        
     async def _download_tiktok_via_api(self, url: str, temp_path: str) -> DownloadedVideo:
         api_url = "https://www.tikwm.com/api/"
         async with aiohttp.ClientSession() as session:
