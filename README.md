@@ -68,6 +68,7 @@ src/config.py
 BOT_TOKEN=ВАШ_TELEGRAM_BOT_TOKEN
 ADMIN_ID=123456789
 CHANNEL_ID=@your_channel
+CHANNEL_URL=@your_channel_url
 ```
 
 > `CHANNEL_ID` используется для обязательной подписки (опционально)
