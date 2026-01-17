@@ -27,6 +27,8 @@ STRINGS = {
         "check_sub": "🔄 Проверить подписку",
         "btn_channel": "📢 Наш канал",
         "btn_help": "🆘 Помощь",
+        "btn_settings": "⚙️ Настройки",
+        "settings_msg": "Здесь ты можешь изменить язык бота:",
         "help_msg": "Просто отправь ссылку на видео из TikTok, YT или Insta. Бот сам предложит варианты скачивания.",
         "link_received": "Ссылка принята! Что именно скачиваем?",
         "btn_video": "🎬 Видео",
@@ -52,6 +54,8 @@ STRINGS = {
         "check_sub": "🔄 Check Subscription",
         "btn_channel": "📢 Our Channel",
         "btn_help": "🆘 Help",
+        "btn_settings": "⚙️ Settings",
+        "settings_msg": "Here you can change the bot's language:",
         "help_msg": "Just send a video link from TikTok, YT, or Insta. The bot will offer download options.",
         "link_received": "Link received! What would you like to download?",
         "btn_video": "🎬 Video",
@@ -73,7 +77,7 @@ STRINGS = {
 
 # Состояния
 class DownloadStates(StatesGroup):
-    choosing_language = State() # Новое состояние для выбора языка
+    choosing_language = State()
     choosing_format = State()
 
 class AdminStates(StatesGroup):
@@ -102,16 +106,42 @@ async def is_subscribed(bot, user_id):
 
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
-    await state.clear()
     register_user(message.from_user.id)
+    user_data = await state.get_data()
+    lang = user_data.get("lang")
+
+    if not lang:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
+                InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
+            ]
+        ])
+        await message.answer(STRINGS["ru"]["start"], reply_markup=kb)
+        await state.set_state(DownloadStates.choosing_language)
+    else:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
+            [
+                InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info"),
+                InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="open_settings")
+            ]
+        ])
+        await message.answer(STRINGS[lang]["welcome"], parse_mode="HTML", reply_markup=kb)
+
+@video_router.callback_query(F.data == "open_settings")
+async def open_settings(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
             InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
-        ]
+        ],
+        [InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")]
     ])
-    await message.answer(STRINGS["ru"]["start"], reply_markup=kb)
-    await state.set_state(DownloadStates.choosing_language)
+    await callback.message.edit_text(STRINGS[lang]["settings_msg"], reply_markup=kb)
+    await callback.answer()
 
 @video_router.callback_query(F.data.startswith("setlang_"))
 async def set_language(callback: types.CallbackQuery, state: FSMContext):
@@ -120,17 +150,20 @@ async def set_language(callback: types.CallbackQuery, state: FSMContext):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info")]
+        [
+            InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info"),
+            InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="open_settings")
+        ]
     ])
     await callback.message.edit_text(STRINGS[lang]["welcome"], parse_mode="HTML", reply_markup=kb)
     await state.set_state(None)
-    await callback.answer()
+    await callback.answer(f"Language: {lang.upper()}")
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
     register_user(message.from_user.id)
     data = await state.get_data()
-    lang = data.get("lang", "ru") # По умолчанию русский
+    lang = data.get("lang", "ru")
     
     if not await is_subscribed(message.bot, message.from_user.id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -174,7 +207,10 @@ async def cancel_handler(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(None)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info")]
+        [
+            InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info"),
+            InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="open_settings")
+        ]
     ])
     await callback.message.edit_text(STRINGS[lang]["cancel_msg"], reply_markup=kb)
     await callback.answer()
@@ -233,7 +269,6 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
             try: os.remove(video_path)
             except: pass
 
-# --- АДМИНСКАЯ РАССЫЛКА (без изменений) ---
 @video_router.message(Command("broadcast"))
 async def start_broadcast(message: types.Message, state: FSMContext):
     if str(message.from_user.id) != str(conf.admin_id): return
