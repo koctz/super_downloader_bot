@@ -53,7 +53,7 @@ class VideoDownloader:
             except: pass
         return output_path
 
-def _process_video(self, input_path, duration, is_insta=False):
+    def _process_video(self, input_path, duration, is_insta=False):
     base = os.path.basename(input_path).replace("raw_", "final_")
     if not base.endswith(".mp4"):
         base = os.path.splitext(base)[0] + ".mp4"
