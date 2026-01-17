@@ -179,14 +179,25 @@ class VideoDownloader:
 
             duration = info.get("duration", 0)
 
-            # Определяем Instagram по extractor и URL
             extractor = info.get("extractor", "") or ""
             webpage_url = info.get("webpage_url", "") or ""
+
+            # Instagram detection
             is_insta = "instagram" in extractor.lower() or "instagram.com" in webpage_url.lower()
 
-            print(f"DEBUG: extractor={extractor}, is_insta={is_insta}")
+            # TikTok detection
+            is_tiktok = "tiktok" in extractor.lower() or "tiktok.com" in webpage_url.lower()
 
-            final_path = self._process_video(downloaded_path, duration, is_insta=is_insta)
+            # Combined flag
+            need_deep_processing = is_insta or is_tiktok
+
+            print(f"DEBUG: extractor={extractor}, is_insta={is_insta}, is_tiktok={is_tiktok}")
+
+            final_path = self._process_video(
+                downloaded_path,
+                duration,
+                is_insta=need_deep_processing
+            )
 
             return DownloadedVideo(
                 path=final_path,
