@@ -127,6 +127,23 @@ class VideoDownloader:
             output_path
         ]
 
+        def _process_audio(self, input_path):
+        """Извлечение аудио дорожки и конвертация в MP3"""
+        base = os.path.basename(input_path)
+        output_path = os.path.join(self.download_path, os.path.splitext(base)[0] + ".mp3")
+        
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vn", # Отключить видео
+            "-acodec", "libmp3lame",
+            "-q:a", "2", # Качество (примерно 190-250 kbps)
+            output_path
+        ]
+        
+        subprocess.run(cmd, capture_output=True)
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        return output_path
         # Если файл слишком тяжелый, заменяем -crf на конкретный битрейт
         if file_size > 48 * 1024 * 1024:
             target_bitrate = int((42 * 1024 * 1024 * 8) / max(duration, 1))
