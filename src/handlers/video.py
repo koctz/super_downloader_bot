@@ -102,6 +102,7 @@ async def is_subscribed(bot, user_id):
 
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
+    await state.clear()
     register_user(message.from_user.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
