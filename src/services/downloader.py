@@ -36,8 +36,19 @@ class VideoDownloader:
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
 
+    # -----------------------------
+    # NORMALIZATION OF DOMAINS
+    # -----------------------------
+    def _normalize_url(self, url: str) -> str:
+        url = url.replace("vk.ru", "vk.com")
+        url = url.replace("vm.tiktok.com", "www.tiktok.com")
+        url = url.replace("vt.tiktok.com", "www.tiktok.com")
+        return url
+
+    # -----------------------------
+    # YT-DLP OPTIONS
+    # -----------------------------
     def _get_opts(self, url):
-        # Базовые опции
         opts = {
             "outtmpl": os.path.join(self.download_path, "raw_%(id)s.%(ext)s"),
             "noplaylist": True,
@@ -60,10 +71,9 @@ class VideoDownloader:
             cookies_path = os.path.join(os.getcwd(), "cookies_instagram.txt")
             if os.path.exists(cookies_path):
                 opts["cookiefile"] = cookies_path
-
             opts["http_headers"]["Referer"] = "https://www.instagram.com/"
 
-        # TIKTOK
+        # TIKTOK (без cookies)
         elif "tiktok.com" in url:
             opts["http_headers"]["User-Agent"] = self.mobile_ua
             opts["http_headers"]["Referer"] = "https://www.tiktok.com/"
@@ -71,11 +81,7 @@ class VideoDownloader:
             opts["http_headers"]["sec-fetch-mode"] = "navigate"
             opts["http_headers"]["sec-fetch-dest"] = "document"
 
-            cookies_path = os.path.join(os.getcwd(), "cookies_tiktok.txt")
-            if os.path.exists(cookies_path):
-                opts["cookiefile"] = cookies_path
-
-        # VKONTAKTE (публичные видео)
+        # VK (публичные видео)
         elif "vk.com" in url:
             opts["http_headers"]["User-Agent"] = self.desktop_ua
             opts["http_headers"]["Referer"] = "https://vk.com/"
@@ -85,6 +91,9 @@ class VideoDownloader:
 
         return opts
 
+    # -----------------------------
+    # FFMPEG PROCESSING
+    # -----------------------------
     def _process_video(self, input_path, duration):
         base = os.path.basename(input_path).replace("raw_", "final_")
         output_path = os.path.join(self.download_path, base)
@@ -118,7 +127,11 @@ class VideoDownloader:
 
         return output_path
 
+    # -----------------------------
+    # MAIN DOWNLOAD FUNCTION
+    # -----------------------------
     def _download_sync(self, url: str) -> DownloadedVideo:
+        url = self._normalize_url(url)
         opts = self._get_opts(url)
 
         try:
