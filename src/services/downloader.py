@@ -2,6 +2,7 @@ import os
 import asyncio
 import yt_dlp
 import subprocess
+import random
 from dataclasses import dataclass
 from src.config import conf
 
@@ -22,29 +23,41 @@ class DownloadedVideo:
 class VideoDownloader:
     def __init__(self):
         self.download_path = conf.download_path
+        # Список современных User-Agents для обхода блокировок
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1'
+        ]
 
     def _get_opts(self, filename_tmpl):
-        """
-        Настройки yt-dlp: 
-        Приоритет 1: MP4 (H264) до 480p — это самый быстрый путь.
-        Приоритет 2: Любое видео до 480p.
-        """
-        return {
+        """Настройки yt-dlp с ротацией User-Agent и Cookies"""
+        opts = {
+            # Приоритет 480p MP4 для скорости и совместимости с iPhone
             'format': 'bestvideo[ext=mp4][vcodec^=avc1][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]/best[height<=480]/best',
             'outtmpl': filename_tmpl,
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'geo_bypass': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'user_agent': random.choice(self.user_agents),
+            'nocheckcertificate': True,
+            'wait_for_video_data': 5,
+            'socket_timeout': 30,
         }
 
+        # Подключаем cookies.txt, если он лежит в корне бота
+        cookies_path = os.path.join(os.getcwd(), 'cookies.txt')
+        if os.path.exists(cookies_path):
+            opts['cookiefile'] = cookies_path
+            print(f"DEBUG: Использую куки из {cookies_path}")
+        
+        return opts
+
     def _process_video(self, input_path, force_recode=False, target_bitrate=None):
-        """
-        Обработка видео:
-        - Если видео уже в MP4 и маленькое, мы просто фиксим метаданные (быстро).
-        - Если видео тяжелое или в другом формате, перекодируем.
-        """
+        """FFmpeg: Копирование для скорости или сжатие при необходимости"""
         base_name = os.path.basename(input_path).replace("raw_", "final_")
         name_without_ext = os.path.splitext(base_name)[0]
         output_path = os.path.join(self.download_path, f"{name_without_ext}.mp4")
@@ -52,33 +65,33 @@ class VideoDownloader:
         cmd = ['ffmpeg', '-y', '-i', input_path]
 
         if target_bitrate:
-            # Сжатие под лимит
+            # Режим жесткого сжатия под лимит 50МБ
             cmd += [
                 '-c:v', 'libx264', '-preset', 'ultrafast', '-b:v', str(target_bitrate),
                 '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k'
             ]
         elif force_recode:
-            # Быстрая смена формата под iPhone
+            # Режим исправления формата для iPhone
             cmd += [
                 '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
                 '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k'
             ]
         else:
-            # Видео уже хорошее, просто копируем потоки и фиксим метаданные (мгновенно)
+            # Режим мгновенного копирования
             cmd += ['-c', 'copy']
 
-        # Флаг для быстрого старта видео на iPhone
+        # Faststart позволяет iPhone начинать видео без полной загрузки
         cmd += ['-movflags', 'faststart', output_path]
         
-        print(f"DEBUG: Запуск FFmpeg. Режим: {'Сжатие' if target_bitrate else 'Копирование/Фикс'}")
+        print(f"DEBUG: FFmpeg запуск (Mode: {'Recode' if force_recode else 'Copy'})")
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if os.path.exists(input_path):
             os.remove(input_path)
             
         if result.returncode != 0:
-            # Если "быстрое копирование" не сработало, пробуем перекодировать принудительно
             if not force_recode and not target_bitrate:
+                print("DEBUG: Copy failed, retrying with full recode...")
                 return self._process_video(input_path, force_recode=True)
             raise DownloadError(f"FFmpeg error: {result.stderr[:100]}")
             
@@ -90,27 +103,25 @@ class VideoDownloader:
         
         with yt_dlp.YoutubeDL(self._get_opts(temp_path_tmpl)) as ydl:
             try:
+                print(f"DEBUG: Начинаю yt-dlp загрузку: {url}")
                 info = ydl.extract_info(url, download=True)
                 downloaded_path = ydl.prepare_filename(info)
 
                 if not os.path.exists(downloaded_path):
                     files = [f for f in os.listdir(self.download_path) if f.startswith(f"raw_{unique_id}")]
-                    if not files: raise DownloadError("Файл не найден")
+                    if not files: raise DownloadError("Не удалось найти скачанный файл")
                     downloaded_path = os.path.join(self.download_path, files[0])
 
                 file_size = os.path.getsize(downloaded_path)
                 duration = info.get('duration', 0)
                 is_mp4 = downloaded_path.lower().endswith('.mp4')
 
+                # Расчет битрейта если файл больше 48 МБ
                 target_bitrate = None
-                # Если даже в 480p файл > 48МБ (редко, но бывает для длинных видео)
                 if file_size > 48 * 1024 * 1024 and duration > 0:
-                    target_size_bits = 42 * 1024 * 1024 * 8
-                    target_bitrate = int(target_size_bits / duration)
+                    target_bitrate = int((42 * 1024 * 1024 * 8) / duration)
                 
-                # Нужно ли перекодировать? Да, если не MP4 или если нужно сжать.
                 force_recode = not is_mp4 or target_bitrate is not None
-                
                 final_path = self._process_video(downloaded_path, force_recode, target_bitrate)
 
                 return DownloadedVideo(
@@ -125,6 +136,7 @@ class VideoDownloader:
                 )
 
             except Exception as e:
+                # Очистка при сбое
                 for f in os.listdir(self.download_path):
                     if unique_id in f:
                         try: os.remove(os.path.join(self.download_path, f))
