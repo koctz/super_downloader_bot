@@ -29,26 +29,25 @@ class VideoDownloader:
     def __init__(self):
         # Настройки yt-dlp для максимальной совместимости
         self.ydl_opts = {
-            # Формат: лучший mp4 (видео + аудио), но не выше 1080p (чтобы не раздувать размер)
-            'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            
-            # Шаблон имени файла: ID видео.расширение
-            'outtmpl': os.path.join(conf.download_path, '%(id)s.%(ext)s'),
-            
-            # Не скачивать плейлисты, если ссылка на плейлист
-            'noplaylist': True,
-            
-            # Игнорировать ошибки (мы их обработаем сами)
-            'ignoreerrors': False,
-            
-            # Не выводить тонну текста в консоль
-            'quiet': True,
-            'no_warnings': True,
-            
-            # Гео-обход и маскировка под браузер
-            'geo_bypass': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        }
+    # Формат: ищем лучшее видео (h264) и лучшее аудио (m4a/aac)
+    # Это гарантирует воспроизведение на iPhone
+    'format': 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[vcodec^=avc1]/best',
+    
+    'outtmpl': os.path.join(conf.download_path, '%(id)s.%(ext)s'),
+    'noplaylist': True,
+    'quiet': True,
+    'no_warnings': True,
+    'geo_bypass': True,
+    
+    # Добавляем пост-обработку для исправления метаданных
+    'postprocessors': [{
+        'key': 'FFmpegVideoConvertor',
+        'preferedformat': 'mp4',  # Убеждаемся, что на выходе MP4
+    }],
+    
+    # Маскировка под браузер
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+}
 
     # Вспомогательный синхронный метод (запускается в отдельном потоке)
     def _download_sync(self, url: str) -> DownloadedVideo:
