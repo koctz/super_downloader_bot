@@ -2,12 +2,13 @@ import os
 import asyncio
 import yt_dlp
 import subprocess
-import random
 from dataclasses import dataclass
 from src.config import conf
 
+
 class DownloadError(Exception):
     pass
+
 
 @dataclass
 class DownloadedVideo:
@@ -20,105 +21,113 @@ class DownloadedVideo:
     thumb_url: str
     file_size: int
 
+
 class VideoDownloader:
     def __init__(self):
         self.download_path = conf.download_path
-        self.user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        ]
 
-    def _get_opts(self, filename_tmpl, url):
-        import random
+        self.mobile_ua = (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
+        )
+
+        self.desktop_ua = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+
+    def _get_opts(self, url):
         opts = {
-            'format': 'bestvideo[ext=mp4][vcodec^=avc1][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]/best[height<=480]/best',
-            'outtmpl': filename_tmpl,
-            'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
-            'geo_bypass': True,
-            'nocheckcertificate': True,
-            'user_agent': random.choice(self.user_agents),
+            "outtmpl": os.path.join(self.download_path, "raw_%(id)s.%(ext)s"),
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "geo_bypass": True,
+            "nocheckcertificate": True,
+            "http_headers": {
+                "User-Agent": self.desktop_ua,
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            "format": "mp4/best",
         }
 
-        # ЛОГИКА ДЛЯ INSTAGRAM
-        if 'instagram.com' in url:
-            cookies_path = os.path.join(os.getcwd(), 'cookies.txt')
+        # INSTAGRAM — нужен cookiefile
+        if "instagram.com" in url:
+            cookies_path = os.path.join(os.getcwd(), "cookies_instagram.txt")
             if os.path.exists(cookies_path):
-                opts['cookiefile'] = cookies_path
-            opts['http_headers'] = {
-                'Referer': 'https://www.instagram.com/',
-                'Origin': 'https://www.instagram.com',
-            }
-        
-        # ЛОГИКА ДЛЯ TIKTOK (Заходим как мобильное устройство, БЕЗ КУКОВ ИНСТЫ)
-        elif 'tiktok.com' in url:
-            opts['user_agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1'
-            opts['extractor_args'] = {'tiktok': {'webpage_download': True}}
+                opts["cookiefile"] = cookies_path
+            opts["http_headers"]["Referer"] = "https://www.instagram.com/"
+
+        # TIKTOK — мобильный UA + реальный extractor
+        elif "tiktok.com" in url:
+            opts["http_headers"]["User-Agent"] = self.mobile_ua
+            opts["http_headers"]["Referer"] = "https://www.tiktok.com/"
+            cookies_path = os.path.join(os.getcwd(), "cookies_tiktok.txt")
+            if os.path.exists(cookies_path):
+                opts["cookiefile"] = cookies_path
 
         return opts
 
-    def _process_video(self, input_path, force_recode=False, target_bitrate=None):
-        base_name = os.path.basename(input_path).replace("raw_", "final_")
-        name_without_ext = os.path.splitext(base_name)[0]
-        output_path = os.path.join(self.download_path, f"{name_without_ext}.mp4")
-        
-        cmd = ['ffmpeg', '-y', '-i', input_path]
-        if target_bitrate:
-            cmd += ['-c:v', 'libx264', '-preset', 'ultrafast', '-b:v', str(target_bitrate), '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k']
-        elif force_recode:
-            cmd += ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k']
-        else:
-            cmd += ['-c', 'copy']
+    def _process_video(self, input_path, duration):
+        base = os.path.basename(input_path).replace("raw_", "final_")
+        output_path = os.path.join(self.download_path, base)
 
-        cmd += ['-movflags', 'faststart', output_path]
+        file_size = os.path.getsize(input_path)
+
+        # Telegram limit 50 MB
+        if file_size <= 48 * 1024 * 1024:
+            cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-movflags", "faststart", output_path]
+        else:
+            target_bitrate = int((42 * 1024 * 1024 * 8) / max(duration, 1))
+            cmd = [
+                "ffmpeg", "-y", "-i", input_path,
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-b:v", str(target_bitrate),
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "faststart",
+                output_path
+            ]
+
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if os.path.exists(input_path): os.remove(input_path)
-        
+
+        try:
+            os.remove(input_path)
+        except:
+            pass
+
         if result.returncode != 0:
-            if not force_recode and not target_bitrate:
-                return self._process_video(input_path, force_recode=True)
-            raise DownloadError(f"FFmpeg error: {result.stderr[:100]}")
+            raise DownloadError(f"FFmpeg error: {result.stderr[:200]}")
+
         return output_path
 
     def _download_sync(self, url: str) -> DownloadedVideo:
-        unique_id = str(hash(url))[-8:]
-        temp_path_tmpl = os.path.join(self.download_path, f"raw_{unique_id}.%(ext)s")
-        
-        # Передаем URL в настройки
-        with yt_dlp.YoutubeDL(self._get_opts(temp_path_tmpl, url)) as ydl:
-            try:
+        opts = self._get_opts(url)
+
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 downloaded_path = ydl.prepare_filename(info)
 
                 if not os.path.exists(downloaded_path):
-                    files = [f for f in os.listdir(self.download_path) if f.startswith(f"raw_{unique_id}")]
-                    if not files: raise DownloadError("File not found")
-                    downloaded_path = os.path.join(self.download_path, files[0])
+                    raise DownloadError("Downloaded file not found")
 
-                file_size = os.path.getsize(downloaded_path)
-                duration = info.get('duration', 0)
-                is_mp4 = downloaded_path.lower().endswith('.mp4')
-
-                target_bitrate = None
-                if file_size > 48 * 1024 * 1024 and duration > 0:
-                    target_bitrate = int((42 * 1024 * 1024 * 8) / duration)
-                
-                final_path = self._process_video(downloaded_path, not is_mp4 or target_bitrate is not None, target_bitrate)
+                duration = info.get("duration", 0)
+                final_path = self._process_video(downloaded_path, duration)
 
                 return DownloadedVideo(
-                    path=final_path, title=info.get('title', 'Video'),
-                    duration=int(duration or 0), author=info.get('uploader', 'Unknown'),
-                    width=info.get('width', 0) or 0, height=info.get('height', 0) or 0,
-                    thumb_url=info.get('thumbnail', ''), file_size=os.path.getsize(final_path)
+                    path=final_path,
+                    title=info.get("title", "Video"),
+                    duration=int(duration or 0),
+                    author=info.get("uploader", "Unknown"),
+                    width=info.get("width", 0) or 0,
+                    height=info.get("height", 0) or 0,
+                    thumb_url=info.get("thumbnail", ""),
+                    file_size=os.path.getsize(final_path),
                 )
-            except Exception as e:
-                for f in os.listdir(self.download_path):
-                    if unique_id in f:
-                        try: os.remove(os.path.join(self.download_path, f))
-                        except: pass
-                raise DownloadError(str(e))
+
+        except Exception as e:
+            raise DownloadError(str(e))
 
     async def download(self, url: str) -> DownloadedVideo:
         return await asyncio.to_thread(self._download_sync, url)
