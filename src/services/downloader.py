@@ -83,27 +83,50 @@ class VideoDownloader:
         
         return output_path
 
-    def _download_sync(self, url: str) -> DownloadedVideo:
-        # Генерируем уникальное имя файла
+def _download_sync(self, url: str) -> DownloadedVideo:
         unique_id = str(hash(url))[-8:]
-        temp_filename = os.path.join(self.download_path, f"video_{unique_id}.mp4")
+        # Указываем только шаблон папки и ID, расширение пусть выберет yt-dlp
+        temp_path_template = os.path.join(self.download_path, f"video_{unique_id}.%(ext)s")
         
-        with yt_dlp.YoutubeDL(self._get_opts(temp_filename)) as ydl:
+        opts = self._get_opts(temp_path_template)
+        
+        with yt_dlp.YoutubeDL(opts) as ydl:
             try:
-                # Скачиваем
+                # 1. Извлекаем инфо и скачиваем
                 info = ydl.extract_info(url, download=True)
+                
+                # 2. Получаем РЕАЛЬНЫЙ путь к скачанному файлу
                 path = ydl.prepare_filename(info)
                 
-                # Если yt-dlp скачал не в mp4, конвертируем без потери качества
-                if not path.endswith('.mp4'):
-                    new_path = path.rsplit('.', 1)[0] + ".mp4"
-                    subprocess.run(['ffmpeg', '-y', '-i', path, '-c', 'copy', '-movflags', 'faststart', new_path], quiet=True)
-                    os.remove(path)
-                    path = new_path
+                # Если файл скачался, но под другим расширением (например .webp или .mkv)
+                # или если yt-dlp не обновил путь в переменной:
+                if not os.path.exists(path):
+                    # Ищем файл в папке downloads, который начинается на наш ID
+                    files = [f for f in os.listdir(self.download_path) if f.startswith(f"video_{unique_id}")]
+                    if not files:
+                        raise DownloadError("Файл не найден после загрузки.")
+                    path = os.path.join(self.download_path, files[0])
 
+                # 3. Принудительная конвертация в MP4 (если это не MP4) или фикс кодеков
+                # Даже если это mp4, прогоним через быстрый ремукс для фикса метаданных
+                final_mp4 = os.path.join(self.download_path, f"final_{unique_id}.mp4")
+                
+                # Используем ffmpeg для гарантии совместимости с iPhone и исправления контейнера
+                subprocess.run([
+                    'ffmpeg', '-y', '-i', path,
+                    '-c', 'copy', # Копируем потоки без перекодировки (быстро)
+                    '-movflags', 'faststart', 
+                    final_mp4
+                ], capture_output=True)
+
+                # Удаляем промежуточный файл
+                if os.path.exists(path) and path != final_mp4:
+                    os.remove(path)
+                
+                path = final_mp4
                 file_size = os.path.getsize(path)
 
-                # Проверка лимита 50МБ и запуск сжатия если нужно
+                # 4. Проверка лимита 50МБ и запуск сжатия если нужно
                 if file_size > 50 * 1024 * 1024:
                     path = self._compress_video(path)
                     file_size = os.path.getsize(path)
@@ -120,7 +143,10 @@ class VideoDownloader:
                 )
 
             except Exception as e:
-                raise DownloadError(str(e))
+                # Очистка при ошибке
+                if 'path' in locals() and os.path.exists(path):
+                    os.remove(path)
+                raise DownloadError(f"Ошибка: {str(e)}")
 
     async def download(self, url: str) -> DownloadedVideo:
         """Асинхронная обертка для запуска в потоке"""
