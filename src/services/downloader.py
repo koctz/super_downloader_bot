@@ -165,20 +165,28 @@ class VideoDownloader:
 
     def _download_sync(self, url: str, temp_path_raw: str) -> DownloadedVideo:
         opts = self._get_opts(url, temp_path_raw)
+
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_path = ydl.prepare_filename(info)
-            
-            # Фикс для случаев, когда yt-dlp меняет расширение
+
             if not os.path.exists(downloaded_path):
                 base_no_ext = os.path.splitext(downloaded_path)[0]
-                for ext in ['.mp4', '.mkv', '.webm']:
+                for ext in [".mp4", ".mkv", ".webm"]:
                     if os.path.exists(base_no_ext + ext):
                         downloaded_path = base_no_ext + ext
                         break
 
             duration = info.get("duration", 0)
-            final_path = self._process_video(downloaded_path, duration)
+
+            # Определяем Instagram по extractor и URL
+            extractor = info.get("extractor", "") or ""
+            webpage_url = info.get("webpage_url", "") or ""
+            is_insta = "instagram" in extractor.lower() or "instagram.com" in webpage_url.lower()
+
+            print(f"DEBUG: extractor={extractor}, is_insta={is_insta}")
+
+            final_path = self._process_video(downloaded_path, duration, is_insta=is_insta)
 
             return DownloadedVideo(
                 path=final_path,
