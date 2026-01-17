@@ -1,8 +1,8 @@
 import os
+import logging
 from aiogram import Router, types, F
 from aiogram.types import FSInputFile
 from aiogram.utils.chat_action import ChatActionSender
-
 from src.services.downloader import VideoDownloader, DownloadError
 
 video_router = Router()
@@ -12,46 +12,55 @@ URL_PATTERN = r'(https?://\S+)'
 
 @video_router.message(F.text.regexp(URL_PATTERN))
 async def process_video_url(message: types.Message):
-    status_msg = await message.answer("🔎 Изучаю ссылку...")
-    
+    status_msg = await message.answer("⏳ Начинаю работу...")
     url = message.text.strip()
     
-    async with ChatActionSender.upload_video(chat_id=message.chat.id, bot=message.bot):
-        try:
-            # Обновляем статус: скачивание
-            await status_msg.edit_text("⬇️ Начинаю загрузку...")
+    # Путь к видео сохраним во внешней переменной для блока finally
+    video_path = None
+    
+    try:
+        async with ChatActionSender.upload_video(chat_id=message.chat.id, bot=message.bot):
+            await status_msg.edit_text("⬇️ Скачиваю и подготавливаю видео...")
             
-            # Мы добавим проверку времени, чтобы юзер не думал, что бот завис
-            video = await downloader.download(url)
+            video_data = await downloader.download(url)
+            video_path = video_data.path # Сохраняем путь для удаления
             
-            await status_msg.edit_text("⬆️ Отправляю видео в Telegram...")
-            
-            video_file = FSInputFile(video.path)
-            
-            caption = (
-                f"🎬 <b>{video.title}</b>\n"
-                f"👤 {video.author}\n"
-                f"⏱ {video.duration} сек. | 💾 {video.file_size / 1024 / 1024:.1f} MB"
-            )
+            # Проверка: существует ли файл на диске перед отправкой
+            if not os.path.exists(video_path):
+                raise DownloadError("Файл пропал после обработки.")
 
+            await status_msg.edit_text(f"⬆️ Отправляю в Telegram ({video_data.file_size // 1048576} MB)...")
+            
+            video_file = FSInputFile(video_path)
+            
             await message.answer_video(
                 video=video_file,
-                caption=caption,
+                caption=f"🎬 <b>{video_data.title}</b>\n💾 {video_data.file_size // 1048576} MB",
                 parse_mode="HTML",
-                width=video.width,
-                height=video.height,
-                duration=video.duration,
+                width=video_data.width,
+                height=video_data.height,
+                duration=video_data.duration,
                 supports_streaming=True
             )
             
             await status_msg.delete()
 
-        except DownloadError as e:
-            await status_msg.edit_text(f"⚠️ <b>Ошибка загрузки:</b>\n{str(e)}", parse_mode="HTML")
+    except Exception as e:
+        logging.error(f"Ошибка при обработке: {e}")
+        # Выводим конкретную ошибку пользователю
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
             
-        except Exception as e:
-            await status_msg.edit_text(f"☠️ <b>Произошла ошибка:</b>\n{str(e)}", parse_mode="HTML")
-            
-        finally:
-            if 'video' in locals() and video and os.path.exists(video.path):
-                os.remove(video.path)
+    finally:
+        # Глобальная очистка: удаляем всё, что связано с этим видео
+        if video_path and os.path.exists(video_path):
+            os.remove(video_path)
+        
+        # Дополнительная чистка по ID (на случай если остались raw файлы)
+        # Это "подчистит" застрявшие файлы из вашего вопроса
+        try:
+            unique_id = str(hash(url))[-8:]
+            for f in os.listdir("downloads"):
+                if unique_id in f:
+                    os.remove(os.path.join("downloads", f))
+        except:
+            pass
