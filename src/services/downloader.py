@@ -132,7 +132,7 @@ class VideoDownloader:
 
     def _get_opts(self, url, filename_tmpl):
         opts = {
-            'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'outtmpl': filename_tmpl,
             'noplaylist': True,
             'quiet': True,
