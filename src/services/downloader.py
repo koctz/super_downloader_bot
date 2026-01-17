@@ -23,7 +23,7 @@ class DownloadedVideo:
 class VideoDownloader:
     def __init__(self):
         self.download_path = conf.download_path
-        # Список современных User-Agents для обхода блокировок
+        # Список современных User-Agents для имитации разных браузеров
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -33,9 +33,14 @@ class VideoDownloader:
         ]
 
     def _get_opts(self, filename_tmpl):
-        """Настройки yt-dlp с ротацией User-Agent и Cookies"""
+        """
+        Настройки yt-dlp:
+        - Ограничение 480p для скорости.
+        - Ротация User-Agent.
+        - Поддержка Cookies (Netscape format).
+        - Имитация заголовков Instagram.
+        """
         opts = {
-            # Приоритет 480p MP4 для скорости и совместимости с iPhone
             'format': 'bestvideo[ext=mp4][vcodec^=avc1][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]/best[height<=480]/best',
             'outtmpl': filename_tmpl,
             'noplaylist': True,
@@ -44,20 +49,26 @@ class VideoDownloader:
             'geo_bypass': True,
             'user_agent': random.choice(self.user_agents),
             'nocheckcertificate': True,
+            # Добавляем заголовки, чтобы запрос выглядел как переход внутри соцсети
+            'http_headers': {
+                'Referer': 'https://www.instagram.com/',
+                'Origin': 'https://www.instagram.com',
+            },
             'wait_for_video_data': 5,
             'socket_timeout': 30,
         }
 
-        # Подключаем cookies.txt, если он лежит в корне бота
+        # ПУТЬ К КУКАМ: Ищем cookies.txt в корне проекта
         cookies_path = os.path.join(os.getcwd(), 'cookies.txt')
         if os.path.exists(cookies_path):
             opts['cookiefile'] = cookies_path
+            # Принудительно указываем формат, если расширение его не прописало
             print(f"DEBUG: Использую куки из {cookies_path}")
         
         return opts
 
     def _process_video(self, input_path, force_recode=False, target_bitrate=None):
-        """FFmpeg: Копирование для скорости или сжатие при необходимости"""
+        """Обработка через FFmpeg: Copy-mode или Recode-mode"""
         base_name = os.path.basename(input_path).replace("raw_", "final_")
         name_without_ext = os.path.splitext(base_name)[0]
         output_path = os.path.join(self.download_path, f"{name_without_ext}.mp4")
@@ -65,22 +76,18 @@ class VideoDownloader:
         cmd = ['ffmpeg', '-y', '-i', input_path]
 
         if target_bitrate:
-            # Режим жесткого сжатия под лимит 50МБ
             cmd += [
                 '-c:v', 'libx264', '-preset', 'ultrafast', '-b:v', str(target_bitrate),
                 '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k'
             ]
         elif force_recode:
-            # Режим исправления формата для iPhone
             cmd += [
                 '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
                 '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k'
             ]
         else:
-            # Режим мгновенного копирования
             cmd += ['-c', 'copy']
 
-        # Faststart позволяет iPhone начинать видео без полной загрузки
         cmd += ['-movflags', 'faststart', output_path]
         
         print(f"DEBUG: FFmpeg запуск (Mode: {'Recode' if force_recode else 'Copy'})")
@@ -109,14 +116,13 @@ class VideoDownloader:
 
                 if not os.path.exists(downloaded_path):
                     files = [f for f in os.listdir(self.download_path) if f.startswith(f"raw_{unique_id}")]
-                    if not files: raise DownloadError("Не удалось найти скачанный файл")
+                    if not files: raise DownloadError("Файл не найден после загрузки")
                     downloaded_path = os.path.join(self.download_path, files[0])
 
                 file_size = os.path.getsize(downloaded_path)
                 duration = info.get('duration', 0)
                 is_mp4 = downloaded_path.lower().endswith('.mp4')
 
-                # Расчет битрейта если файл больше 48 МБ
                 target_bitrate = None
                 if file_size > 48 * 1024 * 1024 and duration > 0:
                     target_bitrate = int((42 * 1024 * 1024 * 8) / duration)
@@ -136,7 +142,6 @@ class VideoDownloader:
                 )
 
             except Exception as e:
-                # Очистка при сбое
                 for f in os.listdir(self.download_path):
                     if unique_id in f:
                         try: os.remove(os.path.join(self.download_path, f))
