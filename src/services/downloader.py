@@ -53,72 +53,66 @@ class VideoDownloader:
             except: pass
         return output_path
 
-    def _process_video(self, input_path, duration):
-        """Раздельная логика: быстро для всех, глубоко для Instagram"""
-        base = os.path.basename(input_path).replace("raw_", "final_")
-        if not base.endswith(".mp4"):
-            base = os.path.splitext(base)[0] + ".mp4"
-            
-        output_path = os.path.join(self.download_path, base)
-        file_size = os.path.getsize(input_path)
-        MAX_SIZE_BYTES = 46 * 1024 * 1024 
+   def _process_video(self, input_path, duration, is_insta=False):
+    base = os.path.basename(input_path).replace("raw_", "final_")
+    if not base.endswith(".mp4"):
+        base = os.path.splitext(base)[0] + ".mp4"
+        
+    output_path = os.path.join(self.download_path, base)
+    file_size = os.path.getsize(input_path)
+    MAX_SIZE_BYTES = 46 * 1024 * 1024 
 
-        # ПРОВЕРКА: Это Instagram?
-        # Ищем упоминание instagram или reels в названии файла или пути
-        is_insta = "instagram" in input_path.lower() or "reels" in input_path.lower() or "insta" in base.lower()
+    # БОЛЬШЕ НЕ УГАДЫВАЕМ is_insta ПО ИМЕНИ ФАЙЛА
+    # is_insta приходит параметром
 
-        # ЕСЛИ ЭТО НЕ ИНСТАГРАМ И ФАЙЛ ПРОХОДИТ ПО ВЕСУ — КОПИРУЕМ МГНОВЕННО
-        if file_size <= MAX_SIZE_BYTES and not is_insta:
-            print(f"DEBUG: Быстрая перепаковка (YouTube/TikTok/VK): {input_path}")
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-c", "copy", "-map_metadata", "0",
-                "-movflags", "+faststart", output_path
-            ]
-        else:
-            # ЕСЛИ ЭТО ИНСТАГРАМ ИЛИ ТЯЖЕЛЫЙ ФАЙЛ — ДЕЛАЕМ ГЛУБОКУЮ ПЕРЕПАКОВКУ
-            print(f"DEBUG: Глубокая обработка (Instagram или сжатие): {input_path}")
-            
-            # Рассчитываем битрейт, чтобы влезть в лимит
-            target_total_bitrate = int((MAX_SIZE_BYTES * 8) / max(duration, 1))
-            video_bitrate = int(target_total_bitrate * 0.85)
-            
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", # 720p
-                "-c:v", "libx264",
-                "-preset", "ultrafast",       # Чтобы хоть чуть-чуть ускорить процесс
-                "-pix_fmt", "yuv420p",        # КРИТИЧНО для iPhone
-                "-r", "30",                   # КРИТИЧНО для застывших кадров Insta
-                "-vsync", "cfr",              # КРИТИЧНО для синхронизации кадров
-                "-profile:v", "main",         # Совместимость со старыми iPhone
-                "-level", "3.1",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                "-video_track_timescale", "30000" # Фикс таймстемпов Insta
-            ]
+    if file_size <= MAX_SIZE_BYTES and not is_insta:
+        print(f"DEBUG: Быстрая перепаковка (YouTube/TikTok/VK): {input_path}")
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-c", "copy", "-map_metadata", "0",
+            "-movflags", "+faststart", output_path
+        ]
+    else:
+        print(f"DEBUG: Глубокая обработка (Instagram или сжатие): {input_path}")
+        
+        target_total_bitrate = int((MAX_SIZE_BYTES * 8) / max(duration, 1))
+        video_bitrate = int(target_total_bitrate * 0.85)
+        
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p",
+            "-r", "30",
+            "-vsync", "cfr",
+            "-profile:v", "main",
+            "-level", "3.1",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-video_track_timescale", "30000"
+        ]
 
-            # Если файл действительно слишком большой, добавляем ограничение битрейта
-            if file_size > MAX_SIZE_BYTES:
-                cmd.extend([
-                    "-b:v", str(video_bitrate),
-                    "-maxrate", str(video_bitrate),
-                    "-bufsize", str(video_bitrate * 2)
-                ])
-            
-            cmd.append(output_path)
+        if file_size > MAX_SIZE_BYTES:
+            cmd.extend([
+                "-b:v", str(video_bitrate),
+                "-maxrate", str(video_bitrate),
+                "-bufsize", str(video_bitrate * 2)
+            ])
+        
+        cmd.append(output_path)
 
-        # Выполняем команду
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=300)
-        except subprocess.TimeoutExpired:
-            raise DownloadError("Видео слишком длинное для обработки сервером.")
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        raise DownloadError("Видео слишком длинное для обработки сервером.")
 
-        if os.path.exists(input_path):
-            try: os.remove(input_path)
-            except: pass
+    if os.path.exists(input_path):
+        try: os.remove(input_path)
+        except: pass
 
-        return output_path
+    return output_path
+
         
     async def _download_tiktok_via_api(self, url: str, temp_path: str) -> DownloadedVideo:
         api_url = "https://www.tikwm.com/api/"
