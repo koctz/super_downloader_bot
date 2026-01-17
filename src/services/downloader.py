@@ -163,52 +163,37 @@ class VideoDownloader:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
         return opts
 
-    def _download_sync(self, url: str, temp_path_raw: str) -> DownloadedVideo:
-        opts = self._get_opts(url, temp_path_raw)
+    async def _download_tiktok_via_api(self, url: str, temp_path: str) -> DownloadedVideo:
+        api_url = "https://www.tikwm.com/api/"
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            downloaded_path = ydl.prepare_filename(info)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, data={'url': url}) as response:
+                res = await response.json()
+                if res.get('code') != 0:
+                    raise DownloadError(f"TikTok API Error: {res.get('msg')}")
 
-            if not os.path.exists(downloaded_path):
-                base_no_ext = os.path.splitext(downloaded_path)[0]
-                for ext in [".mp4", ".mkv", ".webm"]:
-                    if os.path.exists(base_no_ext + ext):
-                        downloaded_path = base_no_ext + ext
-                        break
+                data = res['data']
+                video_url = data.get('play')
 
-            duration = info.get("duration", 0)
+                async with session.get(video_url) as video_res:
+                    with open(temp_path, 'wb') as f:
+                        f.write(await video_res.read())
 
-            extractor = info.get("extractor", "") or ""
-            webpage_url = info.get("webpage_url", "") or ""
+                duration = data.get('duration', 0)
 
-            # Instagram detection
-            is_insta = "instagram" in extractor.lower() or "instagram.com" in webpage_url.lower()
+                # ВАЖНО: TikTok ВСЕГДА глубокая обработка
+                final_path = self._process_video(temp_path, duration, is_insta=True)
 
-            # TikTok detection — ТЕПЕРЬ НАДЁЖНО
-            is_tiktok = "tiktok.com" in url.lower()
-
-            need_deep_processing = is_insta or is_tiktok
-
-            print(f"DEBUG: extractor={extractor}, is_insta={is_insta}, is_tiktok={is_tiktok}")
-
-            final_path = self._process_video(
-                downloaded_path,
-                duration,
-                is_insta=need_deep_processing
-            )
-
-            return DownloadedVideo(
-                path=final_path,
-                title=info.get("title", "Video"),
-                duration=int(duration or 0),
-                author=info.get("uploader", "Unknown"),
-                width=info.get("width", 0),
-                height=info.get("height", 0),
-                thumb_url=info.get("thumbnail", ""),
-                file_size=os.path.getsize(final_path),
-            )
-
+                return DownloadedVideo(
+                    path=final_path,
+                    title=data.get('title', 'TikTok Video'),
+                    duration=int(duration),
+                    author=data.get('author', {}).get('nickname', 'TikTok User'),
+                    width=data.get('width', 0),
+                    height=data.get('height', 0),
+                    thumb_url=data.get('cover', ''),
+                    file_size=os.path.getsize(final_path),
+                )
 
     async def download(self, url: str, mode: str = 'video') -> DownloadedVideo:
         url = self._normalize_url(url)
