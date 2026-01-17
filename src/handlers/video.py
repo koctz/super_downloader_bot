@@ -29,7 +29,6 @@ class AdminStates(StatesGroup):
 def register_user(user_id: int):
     """Добавляет ID пользователя в файл для рассылки, если его там нет"""
     user_id_str = str(user_id)
-    # Создаем файл, если его нет
     if not os.path.exists(conf.users_db_path):
         os.makedirs(os.path.dirname(conf.users_db_path), exist_ok=True)
         with open(conf.users_db_path, "w") as f:
@@ -174,7 +173,6 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         return
 
     mode = callback.data.split("_")[1]
-    # ЭТАП 1
     status_msg = await callback.message.edit_text("⏳ [1/4] Анализирую ссылку...")
     
     video_path = None
@@ -187,28 +185,53 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
             video_path = video_data.path
             
             # ЭТАП 3
-            await status_msg.edit_text("⚙️ [3/4] Обрабатываю и сжимаю видео...")
+            await status_msg.edit_text("⚙️ [3/4] Обрабатываю и сжимаю...")
             
             # ЭТАП 4
             await status_msg.edit_text("📤 [4/4] Отправляю файл тебе...")
             file = FSInputFile(video_path)
             
+            # Подпись с рекламой бота
+            promo = "\n\n🚀 <b>Скачано через: @youtodownloadbot</b>"
+            clean_title = video_data.title[:900]
+            
             if mode == 'video':
                 await callback.message.answer_video(
-                    video=file, caption=f"🎬 <b>{video_data.title}</b>",
-                    parse_mode="HTML", width=video_data.width, height=video_data.height,
-                    duration=video_data.duration, supports_streaming=True
+                    video=file, 
+                    caption=f"🎬 <b>{clean_title}</b>{promo}",
+                    parse_mode="HTML", 
+                    width=video_data.width, 
+                    height=video_data.height,
+                    duration=video_data.duration, 
+                    supports_streaming=True,
+                    request_timeout=300 # Таймаут 5 минут для тяжелых видео
                 )
             else:
                 await callback.message.answer_audio(
-                    audio=file, caption=f"🎵 <b>{video_data.title}</b>",
-                    parse_mode="HTML", title=video_data.title, performer=video_data.author,
-                    duration=video_data.duration
+                    audio=file, 
+                    caption=f"🎵 <b>{clean_title}</b>{promo}",
+                    parse_mode="HTML", 
+                    title=video_data.title, 
+                    performer=video_data.author,
+                    duration=video_data.duration,
+                    request_timeout=300
                 )
+            
             await status_msg.delete()
             await state.clear()
+            
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+        err_text = str(e)
+        if "Request Entity Too Large" in err_text:
+            msg = "❌ Видео слишком тяжелое для Telegram (даже после сжатия)."
+        elif "Timeout" in err_text:
+            msg = "❌ Видео обрабатывалось слишком долго. Попробуй другое."
+        else:
+            msg = f"❌ Ошибка: {err_text[:100]}"
+            
+        await status_msg.edit_text(msg)
+        await state.clear()
+        
     finally:
         if video_path and os.path.exists(video_path):
             try: os.remove(video_path)
