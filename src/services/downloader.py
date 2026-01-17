@@ -25,6 +25,7 @@ class VideoDownloader:
 
     def _get_opts(self, filename_tmpl):
         return {
+            # Просим h264, если есть, иначе любое до 1080p
             'format': 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/best[height<=1080]/best',
             'outtmpl': filename_tmpl,
             'noplaylist': True,
@@ -35,39 +36,46 @@ class VideoDownloader:
         }
 
     def _process_video(self, input_path, target_bitrate=None):
-        """
-        Универсальная обработка: если нужен конкретный битрейт (сжатие) — используем его.
-        Если нет — просто перекодируем в совместимый формат.
-        """
-        output_path = input_path.replace("raw_", "final_")
+        """Обработка видео: смена кодека под iPhone и сжатие если нужно"""
+        # Создаем имя для финального файла (всегда mp4)
+        base_name = os.path.basename(input_path).replace("raw_", "final_")
+        name_without_ext = os.path.splitext(base_name)[0]
+        output_path = os.path.join(self.download_path, f"{name_without_ext}.mp4")
         
-        # Базовая команда
         cmd = [
             'ffmpeg', '-y', '-i', input_path,
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',  # МАКСИМАЛЬНАЯ СКОРОСТЬ
+            '-preset', 'ultrafast', 
             '-pix_fmt', 'yuv420p',
             '-c:a', 'aac', '-b:a', '128k',
             '-movflags', 'faststart'
         ]
 
-        # Если нужно сжать под 50МБ
         if target_bitrate:
             cmd += ['-b:v', str(target_bitrate), '-maxrate', str(target_bitrate), '-bufsize', str(target_bitrate * 2)]
         else:
-            cmd += ['-crf', '23'] # Хорошее качество по умолчанию
+            cmd += ['-crf', '23']
 
         cmd.append(output_path)
         
-        # Запускаем один раз (1-pass)
-        subprocess.run(cmd, capture_output=True)
+        # Запускаем обработку
+        result = subprocess.run(cmd, capture_output=True, text=True)
         
+        # Сразу удаляем исходник (raw), он нам больше не нужен
         if os.path.exists(input_path):
-            os.remove(input_path)
+            try:
+                os.remove(input_path)
+            except:
+                pass
+                
+        if result.returncode != 0:
+            raise DownloadError(f"Ошибка FFmpeg: {result.stderr[:200]}")
+            
         return output_path
 
     def _download_sync(self, url: str) -> DownloadedVideo:
         unique_id = str(hash(url))[-8:]
+        # Временный шаблон для скачивания
         temp_path_tmpl = os.path.join(self.download_path, f"raw_{unique_id}.%(ext)s")
         
         with yt_dlp.YoutubeDL(self._get_opts(temp_path_tmpl)) as ydl:
@@ -75,28 +83,29 @@ class VideoDownloader:
                 info = ydl.extract_info(url, download=True)
                 downloaded_path = ydl.prepare_filename(info)
 
-                # Проверка существования
+                # Проверка: если файл скачался с другим расширением
                 if not os.path.exists(downloaded_path):
                     files = [f for f in os.listdir(self.download_path) if f.startswith(f"raw_{unique_id}")]
-                    if not files: raise DownloadError("Файл не найден")
+                    if not files:
+                        raise DownloadError("Не удалось найти скачанный файл.")
                     downloaded_path = os.path.join(self.download_path, files[0])
 
                 file_size = os.path.getsize(downloaded_path)
                 duration = info.get('duration', 0)
                 
                 target_bitrate = None
-                # Если файл больше 50МБ, считаем битрейт для 1-pass сжатия
-                if file_size > 50 * 1024 * 1024 and duration > 0:
+                # Считаем битрейт для сжатия под лимит 50МБ (целимся в 45МБ)
+                if file_size > 48 * 1024 * 1024 and duration > 0:
                     target_size_bits = 45 * 1024 * 1024 * 8
                     target_bitrate = int(target_size_bits / duration)
 
-                # Запускаем обработку (теперь это ВСЕГДА 1-pass и всегда ultrafast)
+                # Запускаем перекодировку/сжатие
                 final_path = self._process_video(downloaded_path, target_bitrate)
 
                 return DownloadedVideo(
                     path=final_path,
                     title=info.get('title', 'Video'),
-                    duration=int(duration),
+                    duration=int(duration or 0),
                     author=info.get('uploader', 'Unknown'),
                     width=info.get('width', 0) or 0,
                     height=info.get('height', 0) or 0,
@@ -105,6 +114,11 @@ class VideoDownloader:
                 )
 
             except Exception as e:
+                # Если произошла ошибка, пытаемся почистить всё по этому ID
+                for f in os.listdir(self.download_path):
+                    if unique_id in f:
+                        try: os.remove(os.path.join(self.download_path, f))
+                        except: pass
                 raise DownloadError(str(e))
 
     async def download(self, url: str) -> DownloadedVideo:
