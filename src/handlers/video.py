@@ -20,7 +20,7 @@ downloader = VideoDownloader()
 # --- ЛОКАЛИЗАЦИЯ ---
 STRINGS = {
     "ru": {
-        "choose_lang": "<b>Выберите язык / Choose language:</b>",
+        "choose_lang": "Выберите язык / Choose language:",
         "welcome": "Привет, {name}! 👋\n\nЯ помогу тебе скачать видео из <b>TikTok, YouTube, Instagram или VK</b>.\nПросто пришли мне ссылку!",
         "sub_req": "⚠️ <b>Для использования бота нужно подписаться на наш канал!</b>\n\nЭто помогает нам поддерживать сервер в рабочем состоянии.",
         "btn_sub": "✅ Подписаться",
@@ -48,7 +48,7 @@ STRINGS = {
         "err_timeout": "❌ Видео обрабатывалось слишком долго. Попробуй другое."
     },
     "en": {
-        "choose_lang": "<b>Choose language / Выберите язык:</b>",
+        "choose_lang": "Choose language / Выберите язык:",
         "welcome": "Hello, {name}! 👋\n\nI will help you download videos from <b>TikTok, YouTube, Instagram or VK</b>.\nJust send me a link!",
         "sub_req": "⚠️ <b>You must subscribe to our channel to use this bot!</b>\n\nThis helps us keep the server running.",
         "btn_sub": "✅ Subscribe",
