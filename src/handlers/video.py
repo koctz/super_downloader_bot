@@ -1,4 +1,5 @@
 import os
+import asyncio
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.utils.chat_action import ChatActionSender
@@ -16,21 +17,80 @@ CHANNEL_URL = conf.channel_url
 video_router = Router()
 downloader = VideoDownloader()
 
+# Состояния
 class DownloadStates(StatesGroup):
     choosing_format = State()
 
-# Проверка подписки
+class AdminStates(StatesGroup):
+    waiting_for_broadcast = State()
+
+# --- СЛУЖЕБНЫЕ ФУНКЦИИ ---
+
+def register_user(user_id: int):
+    """Добавляет ID пользователя в файл для рассылки, если его там нет"""
+    user_id_str = str(user_id)
+    # Создаем файл, если его нет
+    if not os.path.exists(conf.users_db_path):
+        with open(conf.users_db_path, "w") as f:
+            pass
+            
+    with open(conf.users_db_path, "r") as f:
+        users = f.read().splitlines()
+    
+    if user_id_str not in users:
+        with open(conf.users_db_path, "a") as f:
+            f.write(user_id_str + "\n")
+
 async def is_subscribed(bot, user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        # Если статус не 'left', значит пользователь подписан
         return member.status in ["member", "administrator", "creator"]
     except Exception:
         return False
 
-# Команда /start
+# --- АДМИНСКАЯ РАССЫЛКА ---
+
+@video_router.message(Command("broadcast"))
+async def start_broadcast(message: types.Message, state: FSMContext):
+    # Проверка, что пишет именно админ (ID из .env)
+    if str(message.from_user.id) != str(conf.admin_id):
+        return
+
+    await message.answer("Пришли сообщение для рассылки. Это может быть текст, фото или видео. Я просто скопирую его всем пользователям.")
+    await state.set_state(AdminStates.waiting_for_broadcast)
+
+@video_router.message(AdminStates.waiting_for_broadcast)
+async def perform_broadcast(message: types.Message, state: FSMContext):
+    await state.clear()
+    
+    if not os.path.exists(conf.users_db_path):
+        await message.answer("База пользователей пуста.")
+        return
+
+    with open(conf.users_db_path, "r") as f:
+        user_ids = f.read().splitlines()
+
+    count = 0
+    blocked = 0
+    status_msg = await message.answer(f"🚀 Начинаю рассылку на {len(user_ids)} пользователей...")
+
+    for user_id in user_ids:
+        try:
+            # Метод copy_to просто дублирует любое сообщение
+            await message.copy_to(chat_id=user_id)
+            count += 1
+            await asyncio.sleep(0.05) # Защита от спам-фильтра ТГ
+        except Exception:
+            blocked += 1
+
+    await status_msg.edit_text(f"✅ Рассылка завершена!\n\nУспешно: {count}\nЗаблокировали бота: {blocked}")
+
+# --- ОСНОВНЫЕ ХЕНДЛЕРЫ ---
+
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message):
+    register_user(message.from_user.id) # Регистрация в базе
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_URL)],
         [InlineKeyboardButton(text="🆘 Помощь", callback_data="help_info")]
@@ -44,10 +104,10 @@ async def start_cmd(message: types.Message):
         reply_markup=kb
     )
 
-# Обработка ссылки с проверкой подписки
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
-    # Проверяем подписку
+    register_user(message.from_user.id) # Регистрация в базе
+    
     subscribed = await is_subscribed(message.bot, message.from_user.id)
     
     if not subscribed:
@@ -79,7 +139,6 @@ async def process_video_url(message: types.Message, state: FSMContext):
     await message.answer("Ссылка принята! Что именно скачиваем?", reply_markup=kb)
     await state.set_state(DownloadStates.choosing_format)
 
-# Обработка кнопки "Проверить подписку"
 @video_router.callback_query(F.data == "check_sub")
 async def check_sub_handler(callback: types.CallbackQuery):
     if await is_subscribed(callback.bot, callback.from_user.id):
@@ -87,7 +146,6 @@ async def check_sub_handler(callback: types.CallbackQuery):
     else:
         await callback.answer("❌ Ты всё еще не подписан!", show_alert=True)
 
-# Инфо-кнопка
 @video_router.callback_query(F.data == "help_info")
 async def help_handler(callback: types.CallbackQuery):
     await callback.message.answer("Просто отправь ссылку на видео из TikTok, YT или Insta. Бот сам предложит варианты скачивания.")
@@ -95,10 +153,7 @@ async def help_handler(callback: types.CallbackQuery):
 
 @video_router.callback_query(F.data == "cancel_download")
 async def cancel_handler(callback: types.CallbackQuery, state: FSMContext):
-    # Очищаем данные и состояние
     await state.clear()
-    
-    # Возвращаем пользователя в "главное меню" (как при /start)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Наш канал", url=conf.channel_url)],
         [InlineKeyboardButton(text="🆘 Помощь", callback_data="help_info")]
@@ -109,7 +164,7 @@ async def cancel_handler(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=kb
     )
     await callback.answer()
-# Дальше идет твой стандартный handle_download (без изменений)
+
 @video_router.callback_query(F.data.startswith("dl_"))
 async def handle_download(callback: types.CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
