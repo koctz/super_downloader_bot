@@ -8,6 +8,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 
+from utils.youtube import get_youtube_formats
+
 from src.services.downloader import VideoDownloader
 from src.db import add_user
 from src.config import conf
@@ -279,8 +281,6 @@ async def youtube_menu(message: types.Message, state: FSMContext):
 
     title = data["title"]
     thumbnail = data["thumbnail"]
-    channel = data["channel"]
-    channel_url = data["channel_url"]
     formats = data["formats"]
     audio_id = data["audio_format"]
 
@@ -290,31 +290,17 @@ async def youtube_menu(message: types.Message, state: FSMContext):
         for f in formats
     ])
 
-    # Компактные кнопки (2 в ряд)
+    # Кнопки
     buttons = []
-    row = []
-    for f in formats:
-        text = f"🎥 {f['resolution']}"
-        row.append(InlineKeyboardButton(text=text, callback_data=f"yt_{f['format_id']}"))
 
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
+    if any(f["resolution"] == "720p" for f in formats):
+        buttons.append([InlineKeyboardButton("🎥 720p", callback_data="yt_720")])
 
-    if row:
-        buttons.append(row)
+    if any(f["resolution"] == "360p" for f in formats):
+        buttons.append([InlineKeyboardButton("🎥 360p", callback_data="yt_360")])
 
-    # Аудио
     if audio_id:
-        buttons.append([
-            InlineKeyboardButton(text="🎵 Аудио", callback_data=f"yta_{audio_id}")
-        ])
-
-    # Канал
-    if channel_url:
-        buttons.append([
-            InlineKeyboardButton(text=f"📺 Канал: {channel}", url=channel_url)
-        ])
+        buttons.append([InlineKeyboardButton("🎵 Аудио", callback_data="yta")])
 
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -327,7 +313,7 @@ async def youtube_menu(message: types.Message, state: FSMContext):
 
 @video_router.callback_query(F.data.startswith("yt_"))
 async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
-    format_id = callback.data.split("_")[1]
+    quality = callback.data.split("_")[1]  # "720" или "360"
 
     data = await state.get_data()
     url = data.get("yt_url")
@@ -336,8 +322,14 @@ async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: URL потерян", show_alert=True)
         return
 
-    # 🔥 СКАЧИВАЕМ ЧЕРЕЗ downloader (универсальный обработчик)
-    video = await downloader.download(url, mode="video", format_id=format_id)
+    # 720p — downloader сам скачает
+    if quality == "720":
+        video = await downloader.download(url, mode="video")
+
+    # 360p — ограничиваем формат
+    elif quality == "360":
+        url = url + "&quality=360p"
+        video = await downloader.download(url, mode="video")
 
     await callback.message.answer_video(
         video=FSInputFile(video.path),
@@ -346,10 +338,8 @@ async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.answer()
 
-@video_router.callback_query(F.data.startswith("yta_"))
+@video_router.callback_query(F.data == "yta")
 async def youtube_audio(callback: types.CallbackQuery, state: FSMContext):
-    format_id = callback.data.split("_")[1]
-
     data = await state.get_data()
     url = data.get("yt_url")
 
@@ -357,7 +347,7 @@ async def youtube_audio(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: URL потерян", show_alert=True)
         return
 
-    audio = await downloader.download(url, mode="audio", format_id=format_id)
+    audio = await downloader.download(url, mode="audio")
 
     await callback.message.answer_audio(
         audio=FSInputFile(audio.path),
