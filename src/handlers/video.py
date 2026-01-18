@@ -6,9 +6,8 @@ from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from src.services.downloader import VideoDownloader
 
-# Настройки 
+from src.services.downloader import VideoDownloader
 from src.db import add_user
 from src.config import conf
 
@@ -113,12 +112,16 @@ async def is_subscribed(bot, user_id):
 async def start_cmd(message: types.Message, state: FSMContext):
     await state.clear()
 
+    # Запись пользователя в SQLite
     add_user(
         user_id=message.from_user.id,
         username=message.from_user.username,
         full_name=message.from_user.full_name,
         lang="ru"
     )
+
+    # Параллельно продолжаем вести TXT-базу для старой админки
+    register_user(message.from_user.id)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -281,7 +284,15 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
+    # Ведём и TXT, и SQLite — чтобы ничего не сломать
     register_user(message.from_user.id)
+    add_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+        lang="ru"
+    )
+
     data = await state.get_data()
     lang = data.get("lang", "ru")
 
