@@ -199,20 +199,23 @@ class VideoDownloader:
                 file_size=os.path.getsize(final_path),
             )
 
-    async def download(self, url, mode='video', format_id=None):
-    data = await asyncio.to_thread(self._download_sync, url, temp_path, format_id)
-        url = self._normalize_url(url)
-        unique_id = str(abs(hash(url)))[:8]
-        temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
+async def download(self, url: str, mode: str = 'video', format_id=None) -> DownloadedVideo:
+    url = self._normalize_url(url)
+    unique_id = str(abs(hash(url)))[:8]
+    temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
 
-        if "tiktok.com" in url:
-            data = await self._download_tiktok_via_api(url, temp_path)
-        else:
-            data = await asyncio.to_thread(self._download_sync, url, temp_path)
+    # TikTok — отдельная логика
+    if "tiktok.com" in url:
+        data = await self._download_tiktok_via_api(url, temp_path)
+    else:
+        # YouTube / VK / Instagram
+        data = await asyncio.to_thread(self._download_sync, url, temp_path, format_id)
 
-        if mode == 'audio':
-            audio_path = self._process_audio(data.path)
-            data.path = audio_path
-            data.file_size = os.path.getsize(audio_path)
-        
-        return data
+    # Обработка аудио
+    if mode == 'audio':
+        audio_path = self._process_audio(data.path)
+        data.path = audio_path
+        data.file_size = os.path.getsize(audio_path)
+
+    return data
+
