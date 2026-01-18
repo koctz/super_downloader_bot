@@ -6,6 +6,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
+from pyrogram import Client as PyroClient
 
 from src.services.downloader import VideoDownloader
 from src.db import add_user
@@ -16,6 +17,14 @@ CHANNEL_URL = conf.channel_url
 
 video_router = Router()
 downloader = VideoDownloader()
+
+# Инициализируем клиент Pyrogram (MTProto)
+pyro_app = PyroClient(
+    "bot_session",
+    api_id=conf.api_id,   # Убедись, что в config.py есть эти поля
+    api_hash=conf.api_hash,
+    bot_token=conf.bot_token
+)
 
 # --- ЛОКАЛИЗАЦИЯ ---
 STRINGS = {
@@ -354,28 +363,62 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         action = ChatActionSender.upload_video if mode == 'video' else ChatActionSender.upload_document
         async with action(chat_id=callback.message.chat.id, bot=callback.bot):
             await status_msg.edit_text(STRINGS[lang]["step_2"], parse_mode="HTML")
+            
+            # Скачиваем файл через downloader
             video_data = await downloader.download(url, mode=mode)
             video_path = video_data.path
+            
+            # Проверяем размер файла в МБ
+            file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+            print(f"DEBUG: File size: {file_size_mb:.2f} MB")
 
             await status_msg.edit_text(STRINGS[lang]["step_3"], parse_mode="HTML")
             await status_msg.edit_text(STRINGS[lang]["step_4"], parse_mode="HTML")
 
-            file = FSInputFile(video_path)
             clean_title = video_data.title[:900]
             caption = f"🎬 <b>{clean_title}</b>{STRINGS[lang]['promo']}"
 
-            if mode == 'video':
-                await callback.message.answer_video(
-                    video=file, caption=caption, parse_mode="HTML",
-                    width=video_data.width, height=video_data.height,
-                    duration=video_data.duration, supports_streaming=True, request_timeout=300
-                )
+            # --- ВЫБОР СПОСОБА ОТПРАВКИ ---
+            if file_size_mb > 50:
+                # Файл тяжелый (> 50МБ) — шлем через Pyrogram (MTProto)
+                async with pyro_app:
+                    if mode == 'video':
+                        await pyro_app.send_video(
+                            chat_id=callback.message.chat.id,
+                            video=video_path,
+                            caption=caption,
+                            duration=video_data.duration,
+                            width=video_data.width,
+                            height=video_data.height,
+                            supports_streaming=True,
+                            parse_mode=types.ParseMode.HTML # Pyrogram использует свои константы, но строки пройдут
+                        )
+                    else:
+                        await pyro_app.send_audio(
+                            chat_id=callback.message.chat.id,
+                            audio=video_path,
+                            caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
+                            duration=video_data.duration,
+                            performer=video_data.author,
+                            title=video_data.title
+                        )
             else:
-                await callback.message.answer_audio(
-                    audio=file, caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
-                    parse_mode="HTML", title=video_data.title, performer=video_data.author,
-                    duration=video_data.duration, request_timeout=300
-                )
+                # Файл легкий — шлем через обычный aiogram (Bot API)
+                file = FSInputFile(video_path)
+                if mode == 'video':
+                    await callback.message.answer_video(
+                        video=file, caption=caption, parse_mode="HTML",
+                        width=video_data.width, height=video_data.height,
+                        duration=video_data.duration, supports_streaming=True, 
+                        request_timeout=300
+                    )
+                else:
+                    await callback.message.answer_audio(
+                        audio=file, caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
+                        parse_mode="HTML", title=video_data.title, performer=video_data.author,
+                        duration=video_data.duration, request_timeout=300
+                    )
+
             from src.db import increment_downloads
             increment_downloads(callback.from_user.id)
 
@@ -383,6 +426,7 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
             await state.clear()
 
     except Exception as e:
+        print(f"ERROR in handle_download: {e}")
         err_text = str(e)
         msg = f"❌ Error: {err_text[:100]}"
         if "Too Large" in err_text:
@@ -391,7 +435,9 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
             msg = STRINGS[lang]["err_timeout"]
         await status_msg.edit_text(msg, parse_mode="HTML")
         await state.clear()
+        
     finally:
+        # Удаляем файл в любом случае
         if video_path and os.path.exists(video_path):
             try:
                 os.remove(video_path)
