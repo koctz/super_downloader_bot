@@ -263,6 +263,94 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 # --- ОБРАБОТКА ССЫЛОК ---
+from utils.youtube import get_youtube_formats
+
+@video_router.message(
+    F.text.contains("youtube.com") | 
+    F.text.contains("youtu.be")
+)
+async def youtube_menu(message: types.Message, state: FSMContext):
+    url = message.text.strip()
+
+    # Получаем данные
+    data = get_youtube_formats(url)
+
+    title = data["title"]
+    thumbnail = data["thumbnail"]
+    channel = data["channel"]
+    channel_url = data["channel_url"]
+    formats = data["formats"]
+    audio_id = data["audio_format"]
+
+    # Формируем кнопки
+    buttons = []
+
+    for f in formats:
+        text = f"{f['resolution']} — {f['size']} МБ" if f["size"] else f["resolution"]
+        buttons.append([
+            InlineKeyboardButton(
+                text=text,
+                callback_data=f"yt_{f['format_id']}_{url}"
+            )
+        ])
+
+    # Аудио
+    if audio_id:
+        buttons.append([
+            InlineKeyboardButton(
+                text="🎵 Аудио",
+                callback_data=f"yta_{audio_id}_{url}"
+            )
+        ])
+
+    # Канал
+    if channel_url:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📺 Канал: {channel}",
+                url=channel_url
+            )
+        ])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer_photo(
+        photo=thumbnail,
+        caption=f"<b>{title}</b>\n\nИсточник: #{channel}",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+@video_router.callback_query(F.data.startswith("yt_"))
+async def youtube_download(callback: types.CallbackQuery):
+    _, format_id, url = callback.data.split("_", 2)
+
+    ydl_opts = {
+        "format": format_id,
+        "outtmpl": "downloads/%(title)s.%(ext)s"
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url)
+        file_path = ydl.prepare_filename(info)
+
+    await callback.message.answer_video(video=open(file_path, "rb"))
+    await callback.answer()
+
+@video_router.callback_query(F.data.startswith("yta_"))
+async def youtube_audio(callback: types.CallbackQuery):
+    _, format_id, url = callback.data.split("_", 2)
+
+    ydl_opts = {
+        "format": format_id,
+        "outtmpl": "downloads/%(title)s.%(ext)s"
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url)
+        file_path = ydl.prepare_filename(info)
+
+    await callback.message.answer_audio(audio=open(file_path, "rb"))
+    await callback.answer()
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
