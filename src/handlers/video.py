@@ -412,12 +412,12 @@ async def admin_broadcast(callback: types.CallbackQuery, state: FSMContext):
 
 @video_router.message(AdminStates.waiting_for_broadcast)
 async def perform_broadcast(message: types.Message, state: FSMContext):
-    await state.clear()
 
     user_ids = get_all_user_ids()
 
     if not user_ids:
         await message.answer("❌ Нет пользователей в базе.", parse_mode="HTML")
+        await state.clear()
         return
 
     count, blocked = 0, 0
@@ -438,4 +438,7 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
         f"Недоступно: <b>{blocked}</b>",
         parse_mode="HTML"
     )
+
+    # ← ВОТ ТУТ, В КОНЦЕ
+    await state.clear()
 
