@@ -26,6 +26,8 @@ class DownloadedVideo:
 class VideoDownloader:
     def __init__(self):
         self.download_path = conf.download_path
+        if not os.path.exists(self.download_path):
+            os.makedirs(self.download_path)
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
@@ -39,6 +41,43 @@ class VideoDownloader:
             video_id = url.split("shorts/")[1].split("?")[0]
             url = f"https://www.youtube.com/watch?v={video_id}"
         return url
+
+    # НОВЫЙ МЕТОД: Получение доступных разрешений для YouTube
+    async def get_formats(self, url: str):
+        url = self._normalize_url(url)
+        if "youtube.com" not in url and "youtu.be" not in url:
+            return None
+        if "watch?v=" not in url: # Для Shorts оставляем стандарт
+            return None
+
+        def extract():
+            opts = self._get_opts(url, "")
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+
+        try:
+            info = await asyncio.to_thread(extract)
+            formats = []
+            seen_heights = set()
+            allowed_heights = [360, 480, 720, 1080]
+            
+            for f in info.get('formats', []):
+                h = f.get('height')
+                if h in allowed_heights and h not in seen_heights:
+                    if f.get('vcodec') != 'none': # Только видео дорожки
+                        seen_heights.add(h)
+            
+            if not seen_heights: return None
+
+            return {
+                "formats": sorted(list(seen_heights)),
+                "title": info.get("title", "Video"),
+                "thumbnail": info.get("thumbnail", ""),
+                "uploader": info.get("uploader", "Unknown"),
+                "uploader_url": info.get("uploader_url", "")
+            }
+        except:
+            return None
 
     def _process_audio(self, input_path):
         base = os.path.basename(input_path)
@@ -55,9 +94,13 @@ class VideoDownloader:
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
         output_path = os.path.join(self.download_path, base)
-        file_size = os.path.getsize(input_path)
         
+        if not os.path.exists(input_path):
+            return input_path
+
+        file_size = os.path.getsize(input_path)
         MTPROTO_LIMIT = 1950 * 1024 * 1024 
+        
         if file_size <= MTPROTO_LIMIT and not is_insta:
             cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-map_metadata", "0", "-movflags", "+faststart", output_path]
         else:
@@ -72,9 +115,15 @@ class VideoDownloader:
             except: pass
         return output_path
 
-    def _get_opts(self, url, filename_tmpl):
+    def _get_opts(self, url, filename_tmpl, quality=None):
+        # Если передано качество, формируем спец. строку формата
+        if quality:
+            fmt = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best'
+        else:
+            fmt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
+
         opts = {
-            'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+            'format': fmt,
             'outtmpl': filename_tmpl,
             'noplaylist': True,
             'quiet': True,
@@ -90,7 +139,8 @@ class VideoDownloader:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
         return opts
 
-    async def download(self, url: str, mode: str = 'video', progress_callback=None) -> DownloadedVideo:
+    # ОБНОВЛЕННЫЙ МЕТОД: принимает параметр quality
+    async def download(self, url: str, mode: str = 'video', progress_callback=None, quality=None) -> DownloadedVideo:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url)))[:8]
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
@@ -99,7 +149,7 @@ class VideoDownloader:
         if "tiktok.com" in url:
             data = await self._download_tiktok_via_api(url, temp_path)
         else:
-            data = await asyncio.to_thread(self._download_sync, url, temp_path, progress_callback, loop)
+            data = await asyncio.to_thread(self._download_sync, url, temp_path, progress_callback, loop, quality)
 
         if mode == 'audio':
             audio_path = self._process_audio(data.path)
@@ -107,7 +157,7 @@ class VideoDownloader:
             data.file_size = os.path.getsize(audio_path)
         return data
 
-    def _download_sync(self, url: str, temp_path_raw: str, progress_callback=None, loop=None) -> DownloadedVideo:
+    def _download_sync(self, url: str, temp_path_raw: str, progress_callback=None, loop=None, quality=None) -> DownloadedVideo:
         def ydl_hook(d):
             if d['status'] == 'downloading' and progress_callback and loop:
                 p = d.get('_percent_str', '0%')
@@ -116,12 +166,14 @@ class VideoDownloader:
                     lambda: asyncio.create_task(progress_callback(clean_p))
                 )
 
-        opts = self._get_opts(url, temp_path_raw)
+        opts = self._get_opts(url, temp_path_raw, quality=quality)
         opts['progress_hooks'] = [ydl_hook]
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_path = ydl.prepare_filename(info)
+            
+            # Проверка расширения (yt-dlp может изменить mp4 на mkv)
             if not os.path.exists(downloaded_path):
                 base_no_ext = os.path.splitext(downloaded_path)[0]
                 for ext in [".mp4", ".mkv", ".webm"]:
