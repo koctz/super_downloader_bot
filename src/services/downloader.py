@@ -5,6 +5,7 @@ import subprocess
 import random
 import aiohttp
 import time
+import re
 from dataclasses import dataclass
 from src.config import conf
 
@@ -42,12 +43,7 @@ class VideoDownloader:
     def _process_audio(self, input_path):
         base = os.path.basename(input_path)
         output_path = os.path.join(self.download_path, os.path.splitext(base)[0] + ".mp3")
-        
-        cmd = [
-            "ffmpeg", "-y", "-i", input_path,
-            "-vn", "-acodec", "libmp3lame", "-q:a", "2", output_path
-        ]
-        
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-vn", "-acodec", "libmp3lame", "-q:a", "2", output_path]
         subprocess.run(cmd, capture_output=True)
         if os.path.exists(input_path):
             try: os.remove(input_path)
@@ -58,58 +54,25 @@ class VideoDownloader:
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
-
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
         
-        BOT_API_LIMIT = 48 * 1024 * 1024 
         MTPROTO_LIMIT = 1950 * 1024 * 1024 
-
         if file_size <= MTPROTO_LIMIT and not is_insta:
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-c", "copy", "-map_metadata", "0",
-                "-movflags", "+faststart", output_path
-            ]
+            cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-map_metadata", "0", "-movflags", "+faststart", output_path]
         else:
-            target_size = MTPROTO_LIMIT if file_size > MTPROTO_LIMIT else BOT_API_LIMIT
-            target_total_bitrate = int((target_size * 8) / max(duration, 1))
-            video_bitrate = int(target_total_bitrate * 0.85)
-
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1",
-                "-c:v", "libx264", "-preset", "ultrafast",
-                "-pix_fmt", "yuv420p", "-r", "30",
-                "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"
-            ]
-            if file_size > MTPROTO_LIMIT or is_insta:
-                cmd.extend(["-b:v", str(video_bitrate), "-maxrate", str(video_bitrate), "-bufsize", str(video_bitrate * 2)])
-            cmd.append(output_path)
+            cmd = ["ffmpeg", "-y", "-i", input_path, "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_path]
 
         try:
             subprocess.run(cmd, capture_output=True, timeout=600)
-        except subprocess.TimeoutExpired:
-            raise DownloadError("Обработка видео заняла слишком много времени.")
-
+        except:
+            pass
         if os.path.exists(input_path):
             try: os.remove(input_path)
             except: pass
-
         return output_path
 
-    def _get_opts(self, url, filename_tmpl, progress_callback=None):
-    def ydl_hook(d):
-            if d['status'] == 'downloading' and progress_callback and loop:
-                p = d.get('_percent_str', '0%')
-                
-                # Очистка от ANSI-кодов (цветов консоли)
-                clean_p = re.sub(r'\x1b\[[0-9;]*m', '', p).strip()
-                
-                loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(progress_callback(clean_p))
-                )
-
+    def _get_opts(self, url, filename_tmpl):
         opts = {
             'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
             'outtmpl': filename_tmpl,
@@ -119,57 +82,46 @@ class VideoDownloader:
             'geo_bypass': True,
             'nocheckcertificate': True,
             'user_agent': random.choice(self.user_agents),
-            'progress_hooks': [ydl_hook] if progress_callback else [],
         }
-        
         if "instagram.com" in url:
             cookies_path = os.path.join(os.getcwd(), "cookies.txt")
             if os.path.exists(cookies_path): opts['cookiefile'] = cookies_path
         elif "youtube.com" in url or "youtu.be" in url:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
-            
         return opts
 
     async def download(self, url: str, mode: str = 'video', progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url)))[:8]
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
-        
-        # ЗАХВАТЫВАЕМ ТЕКУЩИЙ LOOP БОТА
         loop = asyncio.get_running_loop()
 
         if "tiktok.com" in url:
             data = await self._download_tiktok_via_api(url, temp_path)
         else:
-            # ПЕРЕДАЕМ LOOP В СИНХРОННЫЙ ПОТОК
             data = await asyncio.to_thread(self._download_sync, url, temp_path, progress_callback, loop)
 
         if mode == 'audio':
             audio_path = self._process_audio(data.path)
             data.path = audio_path
             data.file_size = os.path.getsize(audio_path)
-        
         return data
 
-    # 2. Обновляем _download_sync, чтобы он использовал переданный loop
     def _download_sync(self, url: str, temp_path_raw: str, progress_callback=None, loop=None) -> DownloadedVideo:
         def ydl_hook(d):
             if d['status'] == 'downloading' and progress_callback and loop:
                 p = d.get('_percent_str', '0%')
-                # Очистка от ANSI-кодов (цветов)
                 clean_p = re.sub(r'\x1b\[[0-9;]*m', '', p).strip()
-                
                 loop.call_soon_threadsafe(
                     lambda: asyncio.create_task(progress_callback(clean_p))
                 )
 
-        opts = self._get_opts(url, temp_path_raw, progress_callback=None)
+        opts = self._get_opts(url, temp_path_raw)
         opts['progress_hooks'] = [ydl_hook]
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_path = ydl.prepare_filename(info)
-
             if not os.path.exists(downloaded_path):
                 base_no_ext = os.path.splitext(downloaded_path)[0]
                 for ext in [".mp4", ".mkv", ".webm"]:
@@ -178,42 +130,16 @@ class VideoDownloader:
                         break
 
             duration = info.get("duration", 0)
-            extractor = info.get("extractor", "") or ""
-            webpage_url = info.get("webpage_url", "") or ""
-            is_insta = "instagram" in extractor.lower() or "instagram.com" in webpage_url.lower()
-
+            is_insta = "instagram" in (info.get("extractor", "") or "").lower()
             final_path = self._process_video(downloaded_path, duration, is_insta=is_insta)
 
             return DownloadedVideo(
-                path=final_path,
-                title=info.get("title", "Video"),
-                duration=int(duration or 0),
-                author=info.get("uploader", "Unknown"),
-                width=info.get("width", 0),
-                height=info.get("height", 0),
-                thumb_url=info.get("thumbnail", ""),
-                file_size=os.path.getsize(final_path),
+                path=final_path, title=info.get("title", "Video"),
+                duration=int(duration or 0), author=info.get("uploader", "Unknown"),
+                width=info.get("width", 0), height=info.get("height", 0),
+                thumb_url=info.get("thumbnail", ""), file_size=os.path.getsize(final_path)
             )
-    async def download(self, url: str, mode: str = 'video', progress_callback=None) -> DownloadedVideo:
-        url = self._normalize_url(url)
-        unique_id = str(abs(hash(url)))[:8]
-        temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
-        
-        # ЗАХВАТЫВАЕМ ТЕКУЩИЙ LOOP БОТА
-        loop = asyncio.get_running_loop()
 
-        if "tiktok.com" in url:
-            data = await self._download_tiktok_via_api(url, temp_path)
-        else:
-            # ПЕРЕДАЕМ LOOP В СИНХРОННЫЙ ПОТОК
-            data = await asyncio.to_thread(self._download_sync, url, temp_path, progress_callback, loop)
-
-        if mode == 'audio':
-            audio_path = self._process_audio(data.path)
-            data.path = audio_path
-            data.file_size = os.path.getsize(audio_path)
-        
-        return data
     async def _download_tiktok_via_api(self, url: str, temp_path: str) -> DownloadedVideo:
         api_url = "https://www.tikwm.com/api/"
         async with aiohttp.ClientSession() as session:
@@ -221,24 +147,16 @@ class VideoDownloader:
                 res = await response.json()
                 if res.get('code') != 0:
                     raise DownloadError(f"TikTok API Error: {res.get('msg')}")
-                
                 data = res['data']
                 video_url = data.get('play')
-                
                 async with session.get(video_url) as video_res:
                     with open(temp_path, 'wb') as f:
                         f.write(await video_res.read())
-
                 duration = data.get('duration', 0)
                 final_path = self._process_video(temp_path, duration)
-
                 return DownloadedVideo(
-                    path=final_path,
-                    title=data.get('title', 'TikTok Video'),
-                    duration=int(duration),
-                    author=data.get('author', {}).get('nickname', 'TikTok User'),
-                    width=data.get('width', 0),
-                    height=data.get('height', 0),
-                    thumb_url=data.get('cover', ''),
-                    file_size=os.path.getsize(final_path),
+                    path=final_path, title=data.get('title', 'TikTok Video'),
+                    duration=int(duration), author=data.get('author', {}).get('nickname', 'TikTok User'),
+                    width=data.get('width', 0), height=data.get('height', 0),
+                    thumb_url=data.get('cover', ''), file_size=os.path.getsize(final_path)
                 )
