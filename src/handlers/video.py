@@ -336,16 +336,14 @@ async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: URL потерян", show_alert=True)
         return
 
-    ydl_opts = {
-        "format": format_id,
-        "outtmpl": "downloads/%(title)s.%(ext)s"
-    }
+    # 🔥 СКАЧИВАЕМ ЧЕРЕЗ downloader (универсальный обработчик)
+    video = await downloader.download(url, mode="video", format_id=format_id)
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url)
-        file_path = ydl.prepare_filename(info)
+    await callback.message.answer_video(
+        video=FSInputFile(video.path),
+        caption=f"🎬 {video.title}"
+    )
 
-    await callback.message.answer_video(video=open(file_path, "rb"))
     await callback.answer()
 
 @video_router.callback_query(F.data.startswith("yta_"))
