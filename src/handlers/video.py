@@ -353,75 +353,91 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         return
 
     mode = callback.data.split("_")[1]
-    await status_msg.edit_text(STRINGS[lang]["step_4"], parse_mode="HTML")
-            
-            # Настройка прогресс-бара для всех видео
-            last_edit_time = 0
-            async def progress_bar(current, total):
-                nonlocal last_edit_time
-                if time.time() - last_edit_time < 4: # Обновляем раз в 4 сек, чтобы не спамить
-                    return
-                percent = current * 100 / total
-                try:
-                    await status_msg.edit_text(
-                        f"📤 <b>[4/4]</b> Отправка: <b>{percent:.1f}%</b>",
-                        parse_mode="HTML"
-                    )
-                    last_edit_time = time.time()
-                except: pass
+    status_msg = await callback.message.edit_text(STRINGS[lang]["step_1"], parse_mode="HTML")
 
-            # Проверяем соединение
-            if not tele_client.is_connected():
-                await tele_client.start(bot_token=conf.bot_token)
+    video_path = None
+    try:
+        # --- ПОДГОТОВКА ПРОГРЕСС-БАРА ---
+        last_edit_time = time.time()
 
-            if mode == 'video':
-                # Атрибуты видео (нужны для превью и стриминга)
-                attributes = [DocumentAttributeVideo(
-                    duration=int(video_data.duration or 0),
-                    w=video_data.width or 0,
-                    h=video_data.height or 0,
-                    supports_streaming=True
-                )]
-                
-                await tele_client.send_file(
-                    callback.message.chat.id,
-                    video_path,
-                    caption=caption,
-                    attributes=attributes,
-                    parse_mode='html',
-                    progress_callback=progress_bar if file_size_mb > 10 else None # Прогресс только для файлов > 10МБ
+        async def download_progress(percent_str):
+            nonlocal last_edit_time
+            if time.time() - last_edit_time < 4:
+                return
+            try:
+                await status_msg.edit_text(
+                    f"📥 <b>[2/4]</b> Загружаю на сервер: <b>{percent_str}</b>",
+                    parse_mode="HTML"
                 )
-            else:
-                # Отправка аудио
-                await tele_client.send_file(
-                    callback.message.chat.id,
-                    video_path,
-                    caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
-                    parse_mode='html',
-                    progress_callback=progress_bar if file_size_mb > 10 else None
-                )
-            from src.db import increment_downloads
-            increment_downloads(callback.from_user.id)
+                last_edit_time = time.time()
+            except:
+                pass
 
-            await status_msg.delete()
-            await state.clear()
+        # --- ШАГ 2: СКАЧИВАНИЕ ---
+        # Убедись, что метод download в downloader.py теперь принимает progress_callback
+        video_data = await downloader.download(url, mode=mode, progress_callback=download_progress)
+        video_path = video_data.path
+
+        # --- ШАГ 3: ОБРАБОТКА ---
+        await status_msg.edit_text(STRINGS[lang]["step_3"], parse_mode="HTML")
+        # Здесь вызывается твой метод _process_video
+        # ...
+
+        # --- ШАГ 4: ОТПРАВКА ЧЕРЕЗ TELETHON ---
+        file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+        
+        async def upload_progress(current, total):
+            nonlocal last_edit_time
+            if time.time() - last_edit_time < 4:
+                return
+            percent = (current / total) * 100
+            try:
+                await status_msg.edit_text(
+                    f"📤 <b>[4/4]</b> Отправляю тебе: <b>{percent:.1f}%</b>",
+                    parse_mode="HTML"
+                )
+                last_edit_time = time.time()
+            except:
+                pass
+
+        if not tele_client.is_connected():
+            await tele_client.start(bot_token=conf.bot_token)
+
+        clean_title = video_data.title[:900]
+        caption = f"🎬 <b>{clean_title}</b>{STRINGS[lang]['promo']}"
+
+        if mode == 'video':
+            attributes = [DocumentAttributeVideo(
+                duration=int(video_data.duration or 0),
+                w=video_data.width or 0,
+                h=video_data.height or 0,
+                supports_streaming=True
+            )]
+            await tele_client.send_file(
+                callback.message.chat.id,
+                video_path,
+                caption=caption,
+                attributes=attributes,
+                parse_mode='html',
+                progress_callback=upload_progress if file_size_mb > 5 else None
+            )
+        else:
+            await tele_client.send_file(
+                callback.message.chat.id,
+                video_path,
+                caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
+                parse_mode='html',
+                progress_callback=upload_progress if file_size_mb > 5 else None
+            )
+
+        await status_msg.delete()
 
     except Exception as e:
-        print(f"ERROR in handle_download: {e}")
-        err_text = str(e)
-        msg = f"❌ Error: {err_text[:100]}"
-        if "Too Large" in err_text:
-            msg = STRINGS[lang]["err_heavy"]
-        elif "Timeout" in err_text:
-            msg = STRINGS[lang]["err_timeout"]
-        await status_msg.edit_text(msg, parse_mode="HTML")
-        await state.clear()
-        
+        print(f"ERROR: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
     finally:
-        # Удаляем файл в любом случае
         if video_path and os.path.exists(video_path):
-            try:
-                os.remove(video_path)
+            os.remove(video_path)
             except:
                 pass
 
