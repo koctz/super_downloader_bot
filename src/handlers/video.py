@@ -6,7 +6,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from pyrogram import Client as PyroClient
+from telethon import TelegramClient
 
 from src.services.downloader import VideoDownloader
 from src.db import add_user
@@ -18,12 +18,9 @@ CHANNEL_URL = conf.channel_url
 video_router = Router()
 downloader = VideoDownloader()
 
-# Инициализируем клиент Pyrogram (MTProto)
-pyro_app = PyroClient(
-    "bot_session",
-    api_id=conf.api_id,   # Убедись, что в config.py есть эти поля
-    api_hash=conf.api_hash
-)
+# Инициализируем Telethon (в режиме бота)
+# 'bot_session' — имя файла сессии
+tele_client = TelegramClient('bot_session', conf.api_id, conf.api_hash)
 
 # --- ЛОКАЛИЗАЦИЯ ---
 STRINGS = {
@@ -379,27 +376,30 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
 
             # --- ВЫБОР СПОСОБА ОТПРАВКИ ---
             if file_size_mb > 50:
-                # Отправка через клиентский API
+                # Отправка через Telethon (MTProto)
+                # Передаем bot_token для авторизации, если еще не авторизованы
+                if not tele_client.is_connected():
+                    await tele_client.start(bot_token=conf.bot_token)
+                
                 if mode == 'video':
-                    await pyro_app.send_video(
-                        chat_id=callback.message.chat.id,
-                        video=video_path,
+                    await tele_client.send_file(
+                        callback.message.chat.id,
+                        video_path,
                         caption=caption,
-                        duration=int(video_data.duration),
-                        width=video_data.width,
-                        height=video_data.height,
-                        supports_streaming=True
+                        supports_streaming=True,
+                        attributes=[
+                            # Это добавит метаданные видео (длительность и размер)
+                            type(video_data).width if hasattr(video_data, 'width') else 0, 
+                            type(video_data).height if hasattr(video_data, 'height') else 0
+                        ] if mode == 'video' else []
                     )
                 else:
-                    await pyro_app.send_audio(
-                        chat_id=callback.message.chat.id,
-                        audio=video_path,
+                    await tele_client.send_file(
+                        callback.message.chat.id,
+                        video_path,
                         caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
-                        duration=int(video_data.duration),
-                        performer=video_data.author,
-                        title=video_data.title
+                        voice=False # Отправляем как музыку
                     )
-
             from src.db import increment_downloads
             increment_downloads(callback.from_user.id)
 
