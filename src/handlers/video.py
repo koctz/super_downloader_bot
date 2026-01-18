@@ -1,16 +1,16 @@
 import os
+import time
 import asyncio
 from aiogram import Router, types, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
-from aiogram.utils.chat_action import ChatActionSender
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from telethon import TelegramClient, events
+from telethon import TelegramClient
 from telethon.tl.types import DocumentAttributeVideo
 
 from src.services.downloader import VideoDownloader
-from src.db import add_user
+from src.db import add_user, get_users, count_users, get_all_user_ids
 from src.config import conf
 
 CHANNEL_ID = conf.channel_id
@@ -19,8 +19,7 @@ CHANNEL_URL = conf.channel_url
 video_router = Router()
 downloader = VideoDownloader()
 
-# Инициализируем Telethon (в режиме бота)
-# 'bot_session' — имя файла сессии
+# Инициализируем Telethon
 tele_client = TelegramClient('telethon_bot', conf.api_id, conf.api_hash)
 
 # --- ЛОКАЛИЗАЦИЯ ---
@@ -83,7 +82,6 @@ STRINGS = {
     }
 }
 
-# Состояния
 class DownloadStates(StatesGroup):
     choosing_language = State()
     choosing_format = State()
@@ -91,7 +89,6 @@ class DownloadStates(StatesGroup):
 class AdminStates(StatesGroup):
     waiting_for_broadcast = State()
 
-# --- СЛУЖЕБНЫЕ ФУНКЦИИ ---
 async def is_subscribed(bot, user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
@@ -104,185 +101,92 @@ async def is_subscribed(bot, user_id):
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
     await state.clear()
-
-    # Запись пользователя в SQLite
-    add_user(
-        user_id=message.from_user.id,
-        username=message.from_user.username,
-        full_name=message.from_user.full_name,
-        lang="ru"
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
-            InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
-        ]
-    ])
+    add_user(user_id=message.from_user.id, username=message.from_user.username, full_name=message.from_user.full_name, lang="ru")
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
+        InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
+    ]])
     await message.answer(STRINGS["ru"]["choose_lang"], reply_markup=kb)
     await state.set_state(DownloadStates.choosing_language)
-
 
 @video_router.callback_query(F.data.startswith("setlang_"))
 async def set_language(callback: types.CallbackQuery, state: FSMContext):
     lang = callback.data.split("_")[1]
     await state.update_data(lang=lang)
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info")],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
     ])
-
     if str(callback.from_user.id) == str(conf.admin_id):
-        kb.inline_keyboard.append(
-            [InlineKeyboardButton(text="🛠 Админ‑панель", callback_data="admin_panel")]
-        )
-
-    await callback.message.edit_text(
-        STRINGS[lang]["welcome"].format(name=callback.from_user.full_name),
-        parse_mode="HTML",
-        reply_markup=kb
-    )
+        kb.inline_keyboard.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_panel")])
+    await callback.message.edit_text(STRINGS[lang]["welcome"].format(name=callback.from_user.full_name), parse_mode="HTML", reply_markup=kb)
     await state.set_state(None)
     await callback.answer()
-
-# --- МЕНЮ НАСТРОЕК ---
 
 @video_router.callback_query(F.data == "settings_menu")
 async def settings_menu(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", "ru")
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=STRINGS[lang]["btn_change_lang"], callback_data="change_language")],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_back"], callback_data="back_to_main")]
     ])
-
     await callback.message.edit_text("⚙️ Настройки", parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
-
-@video_router.callback_query(F.data == "change_language")
-async def change_language(callback: types.CallbackQuery, state: FSMContext):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
-            InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
-        ]
-    ])
-
-    await callback.message.edit_text(
-        STRINGS["ru"]["choose_lang"],
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-    await state.set_state(DownloadStates.choosing_language)
     await callback.answer()
 
 @video_router.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", "ru")
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info")],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
     ])
-
     if str(callback.from_user.id) == str(conf.admin_id):
-        kb.inline_keyboard.append(
-            [InlineKeyboardButton(text="🛠 Админ‑панель", callback_data="admin_panel")]
-        )
-
-    await callback.message.edit_text(
-        STRINGS[lang]["welcome"].format(name=callback.from_user.full_name),
-        parse_mode="HTML",
-        reply_markup=kb
-    )
+        kb.inline_keyboard.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_panel")])
+    await callback.message.edit_text(STRINGS[lang]["welcome"].format(name=callback.from_user.full_name), parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 # --- АДМИН-ПАНЕЛЬ ---
 
 @video_router.callback_query(F.data == "admin_panel")
 async def admin_panel(callback: types.CallbackQuery, state: FSMContext):
-    if str(callback.from_user.id) != str(conf.admin_id):
-        return
-
+    if str(callback.from_user.id) != str(conf.admin_id): return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users_page_0")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
     ])
-
-    await callback.message.edit_text("🛠 <b>Админ‑панель</b>", parse_mode="HTML", reply_markup=kb)
+    await callback.message.edit_text("🛠 <b>Админ-панель</b>", parse_mode="HTML", reply_markup=kb)
     await callback.answer()
-
-USERS_PER_PAGE = 20
-
-from src.db import get_users, count_users
-
-USERS_PER_PAGE = 20
 
 @video_router.callback_query(F.data.startswith("admin_users_page_"))
 async def admin_users(callback: types.CallbackQuery, state: FSMContext):
-    if str(callback.from_user.id) != str(conf.admin_id):
-        return
-
+    if str(callback.from_user.id) != str(conf.admin_id): return
     page = int(callback.data.split("_")[-1])
     total = count_users()
-
-    offset = page * USERS_PER_PAGE
-    users = get_users(offset=offset, limit=USERS_PER_PAGE)
-
+    offset = page * 20
+    users = get_users(offset=offset, limit=20)
     if not users:
         await callback.message.edit_text("Пользователей пока нет.", parse_mode="HTML")
-        await callback.answer()
         return
-
-    lines = []
-    for uid, username, full_name, lang, downloads, last_active in users:
-        status = "🟢"
-        lines.append(
-            f"{status} <code>{uid}</code> — {username or '—'} — {lang.upper()} — DL: {downloads}"
-        )
-
-    text = (
-        f"👥 <b>Пользователи</b>\n"
-        f"Всего: <b>{total}</b>\n"
-        f"Страница: <b>{page + 1}</b>\n\n" +
-        "\n".join(lines)
-    )
-
+    lines = [f"🟢 <code>{u[0]}</code> — {u[1] or '—'} — {u[3].upper()} — DL: {u[4]}" for u in users]
+    text = f"👥 <b>Пользователи</b>\nВсего: <b>{total}</b>\nСтраница: <b>{page + 1}</b>\n\n" + "\n".join(lines)
     buttons = []
-    if page > 0:
-        buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_users_page_{page - 1}"))
-    if offset + USERS_PER_PAGE < total:
-        buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"admin_users_page_{page + 1}"))
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        buttons if buttons else [],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
-    ])
-
+    if page > 0: buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_users_page_{page - 1}"))
+    if offset + 20 < total: buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"admin_users_page_{page + 1}"))
+    kb = InlineKeyboardMarkup(inline_keyboard=[buttons, [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]])
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
 
 # --- ОБРАБОТКА ССЫЛОК ---
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
-    # SQLite
-    add_user(
-        user_id=message.from_user.id,
-        username=message.from_user.username,
-        full_name=message.from_user.full_name,
-        lang="ru"
-    )
-
+    add_user(user_id=message.from_user.id, username=message.from_user.username, full_name=message.from_user.full_name, lang="ru")
     data = await state.get_data()
     lang = data.get("lang", "ru")
-
     if not await is_subscribed(message.bot, message.from_user.id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=STRINGS[lang]["btn_sub"], url=CHANNEL_URL)],
@@ -290,19 +194,13 @@ async def process_video_url(message: types.Message, state: FSMContext):
         ])
         await message.answer(STRINGS[lang]["sub_req"], parse_mode="HTML", reply_markup=kb)
         return
-
     await state.update_data(download_url=message.text.strip())
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text=STRINGS[lang]["btn_video"], callback_data="dl_video"),
-            InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")
-        ],
+        [InlineKeyboardButton(text=STRINGS[lang]["btn_video"], callback_data="dl_video"),
+         InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")]
     ])
-
     await message.answer(STRINGS[lang]["link_ok"], parse_mode="HTML", reply_markup=kb)
-    await state.set_state(DownloadStates.choosing_format)
 
 @video_router.callback_query(F.data == "check_sub")
 async def check_sub_handler(callback: types.CallbackQuery, state: FSMContext):
@@ -313,177 +211,85 @@ async def check_sub_handler(callback: types.CallbackQuery, state: FSMContext):
     else:
         await callback.answer(STRINGS[lang]["sub_fail"], show_alert=True)
 
-@video_router.callback_query(F.data == "help_info")
-async def help_handler(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    lang = data.get("lang", "ru")
-    await callback.message.answer(STRINGS[lang]["help_text"], parse_mode="HTML")
-    await callback.answer()
-
-@video_router.callback_query(F.data == "cancel_download")
-async def cancel_handler(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    lang = data.get("lang", "ru")
-    await state.clear()
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info")],
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
-    ])
-
-    if str(callback.from_user.id) == str(conf.admin_id):
-        kb.inline_keyboard.append(
-            [InlineKeyboardButton(text="🛠 Админ‑панель", callback_data="admin_panel")]
-        )
-
-    await callback.message.edit_text(STRINGS[lang]["cancel_text"], parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
-
-# --- СКАЧИВАНИЕ ---
+# --- СКАЧИВАНИЕ И ПРОГРЕСС ---
 
 @video_router.callback_query(F.data.startswith("dl_"))
 async def handle_download(callback: types.CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     url = user_data.get("download_url")
     lang = user_data.get("lang", "ru")
-
     if not url:
         await callback.answer(STRINGS[lang]["err_lost"], show_alert=True)
         return
 
     mode = callback.data.split("_")[1]
     status_msg = await callback.message.edit_text(STRINGS[lang]["step_1"], parse_mode="HTML")
-
     video_path = None
+    last_edit = [time.time()]
+
+    async def download_progress(p_str):
+        if time.time() - last_edit[0] < 4: return
+        try:
+            await status_msg.edit_text(f"📥 <b>[2/4]</b> Загружаю на сервер: <b>{p_str}</b>", parse_mode="HTML")
+            last_edit[0] = time.time()
+        except: pass
+
+    async def upload_progress(current, total):
+        if time.time() - last_edit[0] < 4: return
+        percent = (current / total) * 100
+        try:
+            await status_msg.edit_text(f"📤 <b>[4/4]</b> Отправляю тебе: <b>{percent:.1f}%</b>", parse_mode="HTML")
+            last_edit[0] = time.time()
+        except: pass
+
     try:
-        # --- ПОДГОТОВКА ПРОГРЕСС-БАРА ---
-        last_edit_time = time.time()
-
-        async def download_progress(percent_str):
-            nonlocal last_edit_time
-            if time.time() - last_edit_time < 4:
-                return
-            try:
-                await status_msg.edit_text(
-                    f"📥 <b>[2/4]</b> Загружаю на сервер: <b>{percent_str}</b>",
-                    parse_mode="HTML"
-                )
-                last_edit_time = time.time()
-            except:
-                pass
-
-        # --- ШАГ 2: СКАЧИВАНИЕ ---
-        # Убедись, что метод download в downloader.py теперь принимает progress_callback
         video_data = await downloader.download(url, mode=mode, progress_callback=download_progress)
         video_path = video_data.path
-
-        # --- ШАГ 3: ОБРАБОТКА ---
         await status_msg.edit_text(STRINGS[lang]["step_3"], parse_mode="HTML")
-        # Здесь вызывается твой метод _process_video
-        # ...
-
-        # --- ШАГ 4: ОТПРАВКА ЧЕРЕЗ TELETHON ---
-        file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
         
-        async def upload_progress(current, total):
-            nonlocal last_edit_time
-            if time.time() - last_edit_time < 4:
-                return
-            percent = (current / total) * 100
-            try:
-                await status_msg.edit_text(
-                    f"📤 <b>[4/4]</b> Отправляю тебе: <b>{percent:.1f}%</b>",
-                    parse_mode="HTML"
-                )
-                last_edit_time = time.time()
-            except:
-                pass
-
         if not tele_client.is_connected():
             await tele_client.start(bot_token=conf.bot_token)
 
-        clean_title = video_data.title[:900]
-        caption = f"🎬 <b>{clean_title}</b>{STRINGS[lang]['promo']}"
+        file_size = os.path.getsize(video_path) / (1024*1024)
+        caption = f"🎬 <b>{video_data.title[:900]}</b>{STRINGS[lang]['promo']}"
 
         if mode == 'video':
-            attributes = [DocumentAttributeVideo(
-                duration=int(video_data.duration or 0),
-                w=video_data.width or 0,
-                h=video_data.height or 0,
-                supports_streaming=True
-            )]
-            await tele_client.send_file(
-                callback.message.chat.id,
-                video_path,
-                caption=caption,
-                attributes=attributes,
-                parse_mode='html',
-                progress_callback=upload_progress if file_size_mb > 5 else None
-            )
+            attr = [DocumentAttributeVideo(duration=int(video_data.duration or 0), 
+                    w=video_data.width or 0, h=video_data.height or 0, supports_streaming=True)]
+            await tele_client.send_file(callback.message.chat.id, video_path, caption=caption, 
+                                        attributes=attr, parse_mode='html', 
+                                        progress_callback=upload_progress if file_size > 5 else None)
         else:
-            await tele_client.send_file(
-                callback.message.chat.id,
-                video_path,
-                caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
-                parse_mode='html',
-                progress_callback=upload_progress if file_size_mb > 5 else None
-            )
-
+            await tele_client.send_file(callback.message.chat.id, video_path, 
+                                        caption=f"🎵 <b>{video_data.title[:900]}</b>", parse_mode='html',
+                                        progress_callback=upload_progress if file_size > 5 else None)
         await status_msg.delete()
-
     except Exception as e:
-        print(f"ERROR: {e}")
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+        print(f"Error: {e}")
+        try: await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+        except: pass
     finally:
         if video_path and os.path.exists(video_path):
             os.remove(video_path)
-            except:
-                pass
 
-# --- АДМИНКА: РАССЫЛКА ---
-
-from src.db import get_all_user_ids
+# --- АДМИНКА РАССЫЛКА ---
 
 @video_router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast(callback: types.CallbackQuery, state: FSMContext):
-    if str(callback.from_user.id) != str(conf.admin_id):
-        return
-
-    await callback.message.answer("Пришли сообщение для рассылки.", parse_mode="HTML")
+    if str(callback.from_user.id) != str(conf.admin_id): return
+    await callback.message.answer("Пришли сообщение для рассылки.")
     await state.set_state(AdminStates.waiting_for_broadcast)
-    await callback.answer()
-
 
 @video_router.message(AdminStates.waiting_for_broadcast)
 async def perform_broadcast(message: types.Message, state: FSMContext):
-
     user_ids = get_all_user_ids()
-
-    if not user_ids:
-        await message.answer("❌ Нет пользователей в базе.", parse_mode="HTML")
-        await state.clear()
-        return
-
     count, blocked = 0, 0
-    status_msg = await message.answer("🚀 Рассылка запущена...", parse_mode="HTML")
-
-    for user_id in user_ids:
+    status = await message.answer("🚀 Рассылка запущена...")
+    for uid in user_ids:
         try:
-            await message.copy_to(chat_id=int(user_id))
+            await message.copy_to(chat_id=int(uid))
             count += 1
             await asyncio.sleep(0.05)
-        except Exception:
-            blocked += 1
-            continue
-
-    await status_msg.edit_text(
-        f"✅ Готово!\n\n"
-        f"Отправлено: <b>{count}</b>\n"
-        f"Недоступно: <b>{blocked}</b>",
-        parse_mode="HTML"
-    )
-
-    # ← ВОТ ТУТ, В КОНЦЕ
+        except: blocked += 1
+    await status.edit_text(f"✅ Готово!\nОтправлено: {count}\nЗаблокировано: {blocked}")
     await state.clear()
-
