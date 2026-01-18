@@ -1,24 +1,15 @@
 import os
 import asyncio
-import logging
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-
 from src.services.downloader import VideoDownloader
-from src.config import conf
 
-# --- БАЗА ДАННЫХ ---
-from src.db import (
-    add_or_update_user,
-    update_last_active,
-    increment_downloads,
-    get_users_page,
-    get_users_count
-)
+# Настройки 
+from src.config import conf
 
 CHANNEL_ID = conf.channel_id
 CHANNEL_URL = conf.channel_url
@@ -43,17 +34,17 @@ STRINGS = {
         "btn_change_lang": "🌐 Сменить язык",
         "btn_back": "⬅️ Назад",
         "link_ok": "Ссылка принята! Что именно скачиваем?",
-        "help_text": "<b>Как пользоваться ботом?</b>\n\nПросто отправь ссылку на видео из TikTok, YouTube, Instagram или VK — я сам предложу варианты скачивания.",
+        "help_text": "Просто отправь ссылку на видео из TikTok, YT или Insta. Бот сам предложит варианты скачивания.",
         "sub_ok": "✅ Спасибо за подписку! Теперь можешь отправлять ссылки.",
         "sub_fail": "❌ Ты всё еще не подписан!",
-        "cancel_text": "Действие отменено. Отправь мне новую ссылку 👇",
+        "cancel_text": "Действие отменено. Отправь мне новую ссылку, и я всё скачаю! 👇",
         "err_lost": "Ошибка: ссылка потерялась. Пришли её ещё раз.",
-        "step_1": "⏳ <b>[1/4]</b> Анализирую ссылку...",
-        "step_2": "📥 <b>[2/4]</b> Загружаю файл на сервер...",
-        "step_3": "⚙️ <b>[3/4]</b> Обрабатываю и сжимаю...",
-        "step_4": "📤 <b>[4/4]</b> Отправляю файл тебе...",
+        "step_1": "⏳ [1/4] Анализирую ссылку...",
+        "step_2": "📥 [2/4] Загружаю файл на сервер...",
+        "step_3": "⚙️ [3/4] Обрабатываю и сжимаю...",
+        "step_4": "📤 [4/4] Отправляю файл тебе...",
         "promo": "\n\n🚀 <b>Скачано через: @youtodownloadbot</b>",
-        "err_heavy": "❌ Видео слишком тяжелое для Telegram.",
+        "err_heavy": "❌ Видео слишком тяжелое для Telegram (даже после сжатия).",
         "err_timeout": "❌ Видео обрабатывалось слишком долго. Попробуй другое."
     },
     "en": {
@@ -71,22 +62,22 @@ STRINGS = {
         "btn_change_lang": "🌐 Change language",
         "btn_back": "⬅️ Back",
         "link_ok": "Link received! What should I download?",
-        "help_text": "<b>How to use the bot?</b>\n\nJust send a video link from TikTok, YouTube, Instagram or VK — I will offer download options.",
+        "help_text": "Just send a video link from TikTok, YT or Insta. The bot will offer download options.",
         "sub_ok": "✅ Thanks for subscribing! Now you can send links.",
         "sub_fail": "❌ You are still not subscribed!",
-        "cancel_text": "Action canceled. Send me a new link 👇",
+        "cancel_text": "Action canceled. Send me a new link! 👇",
         "err_lost": "Error: link lost. Send it again.",
-        "step_1": "⏳ <b>[1/4]</b> Analyzing link...",
-        "step_2": "📥 <b>[2/4]</b> Downloading to server...",
-        "step_3": "⚙️ <b>[3/4]</b> Processing and compressing...",
-        "step_4": "📤 <b>[4/4]</b> Sending file to you...",
+        "step_1": "⏳ [1/4] Analyzing link...",
+        "step_2": "📥 [2/4] Downloading to server...",
+        "step_3": "⚙️ [3/4] Processing and compressing...",
+        "step_4": "📤 [4/4] Sending file to you...",
         "promo": "\n\n🚀 <b>Via: @youtodownloadbot</b>",
         "err_heavy": "❌ Video is too heavy for Telegram.",
         "err_timeout": "❌ Processing timeout. Try another video."
     }
 }
 
-# --- СОСТОЯНИЯ ---
+# Состояния
 class DownloadStates(StatesGroup):
     choosing_language = State()
     choosing_format = State()
@@ -94,15 +85,19 @@ class DownloadStates(StatesGroup):
 class AdminStates(StatesGroup):
     waiting_for_broadcast = State()
 
-# --- ФУНКЦИИ ---
+# --- СЛУЖЕБНЫЕ ФУНКЦИИ ---
 
-def register_user(message: types.Message, lang: str = "ru"):
-    add_or_update_user(
-        user_id=message.from_user.id,
-        username=message.from_user.username,
-        full_name=message.from_user.full_name,
-        lang=lang,
-    )
+def register_user(user_id: int):
+    user_id_str = str(user_id)
+    if not os.path.exists(conf.users_db_path):
+        os.makedirs(os.path.dirname(conf.users_db_path), exist_ok=True)
+        with open(conf.users_db_path, "w") as f:
+            pass
+    with open(conf.users_db_path, "r") as f:
+        users = f.read().splitlines()
+    if user_id_str not in users:
+        with open(conf.users_db_path, "a") as f:
+            f.write(user_id_str + "\n")
 
 async def is_subscribed(bot, user_id):
     try:
@@ -116,8 +111,7 @@ async def is_subscribed(bot, user_id):
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
     await state.clear()
-
-    register_user(message, lang="ru")
+    register_user(message.from_user.id)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -133,14 +127,13 @@ async def set_language(callback: types.CallbackQuery, state: FSMContext):
     lang = callback.data.split("_")[1]
     await state.update_data(lang=lang)
 
-    register_user(callback, lang=lang)
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info")],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
     ])
 
+    # Кнопка админ-панели только для админа
     if str(callback.from_user.id) == str(conf.admin_id):
         kb.inline_keyboard.append(
             [InlineKeyboardButton(text="🛠 Админ‑панель", callback_data="admin_panel")]
@@ -166,7 +159,7 @@ async def settings_menu(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text=STRINGS[lang]["btn_back"], callback_data="back_to_main")]
     ])
 
-    await callback.message.edit_text("⚙️ Настройки", parse_mode="HTML", reply_markup=kb)
+    await callback.message.edit_text("⚙️ Настройки", reply_markup=kb)
     await callback.answer()
 
 @video_router.callback_query(F.data == "change_language")
@@ -180,7 +173,6 @@ async def change_language(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         STRINGS["ru"]["choose_lang"],
-        parse_mode="HTML",
         reply_markup=kb
     )
     await state.set_state(DownloadStates.choosing_language)
@@ -197,6 +189,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
     ])
 
+    # Админ-панель тоже показываем, если это админ
     if str(callback.from_user.id) == str(conf.admin_id):
         kb.inline_keyboard.append(
             [InlineKeyboardButton(text="🛠 Админ‑панель", callback_data="admin_panel")]
@@ -204,12 +197,11 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         STRINGS[lang]["welcome"].format(name=callback.from_user.full_name),
-        parse_mode="HTML",
         reply_markup=kb
     )
     await callback.answer()
 
-# --- АДМИН-ПАНЕЛЬ ---
+# --- АДМИН-меню ---
 
 @video_router.callback_query(F.data == "admin_panel")
 async def admin_panel(callback: types.CallbackQuery, state: FSMContext):
@@ -222,7 +214,7 @@ async def admin_panel(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
     ])
 
-    await callback.message.edit_text("🛠 <b>Админ‑панель</b>", parse_mode="HTML", reply_markup=kb)
+    await callback.message.edit_text("🛠 Админ‑панель", reply_markup=kb)
     await callback.answer()
 
 USERS_PER_PAGE = 20
@@ -234,20 +226,27 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
 
     page = int(callback.data.split("_")[-1])
 
-    users = get_users_page(page, USERS_PER_PAGE)
-    total = get_users_count()
+    if not os.path.exists(conf.users_db_path):
+        await callback.message.edit_text("Пользователей пока нет.")
+        await callback.answer()
+        return
+
+    with open(conf.users_db_path, "r") as f:
+        users = f.read().splitlines()
+
+    total = len(users)
+    start = page * USERS_PER_PAGE
+    end = start + USERS_PER_PAGE
+    page_users = users[start:end]
 
     lines = []
-    for row in users:
-        uid = row["id"]
-        username = row["username"] or "-"
-        lang = row["lang"] or "-"
-        downloads = row["downloads"] or 0
-        status = "🟢" if not row["blocked"] else "🔴"
-
-        lines.append(
-            f"{status} <code>{uid}</code> | {username} | {lang} | 📥 {downloads}"
-        )
+    for uid in page_users:
+        try:
+            member = await callback.bot.get_chat_member(chat_id=uid, user_id=uid)
+            status = "🟢"
+        except:
+            status = "🔴"
+        lines.append(f"{status} <code>{uid}</code>")
 
     text = (
         f"👥 <b>Пользователи</b>\n"
@@ -259,7 +258,7 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
     buttons = []
     if page > 0:
         buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_users_page_{page - 1}"))
-    if (page + 1) * USERS_PER_PAGE < total:
+    if end < total:
         buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"admin_users_page_{page + 1}"))
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -274,11 +273,9 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
+    register_user(message.from_user.id)
     data = await state.get_data()
     lang = data.get("lang", "ru")
-
-    register_user(message, lang=lang)
-    update_last_active(message.from_user.id)
 
     if not await is_subscribed(message.bot, message.from_user.id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -298,7 +295,7 @@ async def process_video_url(message: types.Message, state: FSMContext):
         [InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")]
     ])
 
-    await message.answer(STRINGS[lang]["link_ok"], parse_mode="HTML", reply_markup=kb)
+    await message.answer(STRINGS[lang]["link_ok"], reply_markup=kb)
     await state.set_state(DownloadStates.choosing_format)
 
 @video_router.callback_query(F.data == "check_sub")
@@ -306,7 +303,7 @@ async def check_sub_handler(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", "ru")
     if await is_subscribed(callback.bot, callback.from_user.id):
-        await callback.message.edit_text(STRINGS[lang]["sub_ok"], parse_mode="HTML")
+        await callback.message.edit_text(STRINGS[lang]["sub_ok"])
     else:
         await callback.answer(STRINGS[lang]["sub_fail"], show_alert=True)
 
@@ -314,7 +311,10 @@ async def check_sub_handler(callback: types.CallbackQuery, state: FSMContext):
 async def help_handler(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", "ru")
-    await callback.message.answer(STRINGS[lang]["help_text"], parse_mode="HTML")
+    await callback.message.answer(
+        STRINGS[lang]["help_text"],
+        parse_mode="HTML"
+    )
     await callback.answer()
 
 @video_router.callback_query(F.data == "cancel_download")
@@ -334,7 +334,7 @@ async def cancel_handler(callback: types.CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🛠 Админ‑панель", callback_data="admin_panel")]
         )
 
-    await callback.message.edit_text(STRINGS[lang]["cancel_text"], parse_mode="HTML", reply_markup=kb)
+    await callback.message.edit_text(STRINGS[lang]["cancel_text"], reply_markup=kb)
     await callback.answer()
 
 # --- СКАЧИВАНИЕ ---
@@ -350,18 +350,18 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         return
 
     mode = callback.data.split("_")[1]
-    status_msg = await callback.message.edit_text(STRINGS[lang]["step_1"], parse_mode="HTML")
+    status_msg = await callback.message.edit_text(STRINGS[lang]["step_1"])
 
     video_path = None
     try:
         action = ChatActionSender.upload_video if mode == 'video' else ChatActionSender.upload_document
         async with action(chat_id=callback.message.chat.id, bot=callback.bot):
-            await status_msg.edit_text(STRINGS[lang]["step_2"], parse_mode="HTML")
+            await status_msg.edit_text(STRINGS[lang]["step_2"])
             video_data = await downloader.download(url, mode=mode)
             video_path = video_data.path
 
-            await status_msg.edit_text(STRINGS[lang]["step_3"], parse_mode="HTML")
-            await status_msg.edit_text(STRINGS[lang]["step_4"], parse_mode="HTML")
+            await status_msg.edit_text(STRINGS[lang]["step_3"])
+            await status_msg.edit_text(STRINGS[lang]["step_4"])
 
             file = FSInputFile(video_path)
             clean_title = video_data.title[:900]
@@ -380,16 +380,6 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
                     duration=video_data.duration, request_timeout=300
                 )
 
-            increment_downloads(callback.from_user.id)
-            update_last_active(callback.from_user.id)
-
-            # Кнопка "Назад в меню"
-            menu_kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=STRINGS[lang]["btn_back"], callback_data="back_to_main")]
-            ])
-
-            await callback.message.answer("⬅️ Вернуться в меню", reply_markup=menu_kb)
-
             await status_msg.delete()
             await state.clear()
 
@@ -400,9 +390,8 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
             msg = STRINGS[lang]["err_heavy"]
         elif "Timeout" in err_text:
             msg = STRINGS[lang]["err_timeout"]
-        await status_msg.edit_text(msg, parse_mode="HTML")
+        await status_msg.edit_text(msg)
         await state.clear()
-
     finally:
         if video_path and os.path.exists(video_path):
             try:
@@ -417,30 +406,24 @@ async def admin_broadcast(callback: types.CallbackQuery, state: FSMContext):
     if str(callback.from_user.id) != str(conf.admin_id):
         return
 
-    await callback.message.answer("Пришли сообщение для рассылки.", parse_mode="HTML")
+    await callback.message.answer("Пришли сообщение для рассылки.")
     await state.set_state(AdminStates.waiting_for_broadcast)
     await callback.answer()
 
 @video_router.message(AdminStates.waiting_for_broadcast)
 async def perform_broadcast(message: types.Message, state: FSMContext):
     await state.clear()
-
-    total = get_users_count()
-    users = get_users_page(0, total)
-
+    if not os.path.exists(conf.users_db_path):
+        return
+    with open(conf.users_db_path, "r") as f:
+        user_ids = f.read().splitlines()
     count, blocked = 0, 0
-    status_msg = await message.answer("🚀 Рассылка...", parse_mode="HTML")
-
-    for row in users:
-        uid = row["id"]
+    status_msg = await message.answer("🚀 Рассылка...")
+    for user_id in user_ids:
         try:
-            await message.copy_to(chat_id=uid)
+            await message.copy_to(chat_id=user_id)
             count += 1
             await asyncio.sleep(0.05)
         except:
             blocked += 1
-
-    await status_msg.edit_text(
-        f"✅ Готово!\nУспешно: {count}\nБлок: {blocked}",
-        parse_mode="HTML"
-    )
+    await status_msg.edit_text(f"✅ Готово! Успешно: {count}, Блок: {blocked}")
