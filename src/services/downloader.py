@@ -155,14 +155,16 @@ class VideoDownloader:
     def _download_sync(self, url: str, temp_path_raw: str, progress_callback=None, loop=None) -> DownloadedVideo:
         def ydl_hook(d):
             if d['status'] == 'downloading' and progress_callback and loop:
-                p = d.get('_percent_str', '0%').replace('\x1b[0;32m', '').replace('\x1b[0m', '').strip()
-                # Используем переданный loop вместо asyncio.get_event_loop()
+                p = d.get('_percent_str', '0%')
+                # Очистка от ANSI-кодов (цветов)
+                clean_p = re.sub(r'\x1b\[[0-9;]*m', '', p).strip()
+                
                 loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(progress_callback(p))
+                    lambda: asyncio.create_task(progress_callback(clean_p))
                 )
 
-        opts = self._get_opts(url, temp_path_raw, progress_callback=None) # Вызываем без колбэка
-        opts['progress_hooks'] = [ydl_hook] # Назначаем наш новый хук с привязкой к loop
+        opts = self._get_opts(url, temp_path_raw, progress_callback=None)
+        opts['progress_hooks'] = [ydl_hook]
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -192,7 +194,6 @@ class VideoDownloader:
                 thumb_url=info.get("thumbnail", ""),
                 file_size=os.path.getsize(final_path),
             )
-
     async def download(self, url: str, mode: str = 'video', progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url)))[:8]
