@@ -211,6 +211,17 @@ async def check_sub_handler(callback: types.CallbackQuery, state: FSMContext):
     else:
         await callback.answer(STRINGS[lang]["sub_fail"], show_alert=True)
 
+@video_router.callback_query(F.data == "cancel_download")
+async def cancel_download_handler(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    
+    # Очищаем данные о ссылке, но сохраняем язык
+    await state.update_data(download_url=None)
+    
+    # Редактируем сообщение, уведомляя об отмене
+    await callback.message.edit_text(STRINGS[lang]["cancel_text"], parse_mode="HTML")
+    await callback.answer()
 # --- СКАЧИВАНИЕ И ПРОГРЕСС ---
 
 @video_router.callback_query(F.data.startswith("dl_"))
