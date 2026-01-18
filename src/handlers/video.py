@@ -265,15 +265,16 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
 
 # --- ОБРАБОТКА ССЫЛОК ---
 from utils.youtube import get_youtube_formats
+import yt_dlp
 
 @video_router.message(
-    F.text.contains("youtube.com") | 
+    F.text.contains("youtube.com") |
     F.text.contains("youtu.be")
 )
 async def youtube_menu(message: types.Message, state: FSMContext):
     url = message.text.strip()
+    await state.update_data(yt_url=url)
 
-    # Получаем данные
     data = get_youtube_formats(url)
 
     title = data["title"]
@@ -283,47 +284,57 @@ async def youtube_menu(message: types.Message, state: FSMContext):
     formats = data["formats"]
     audio_id = data["audio_format"]
 
-    # Формируем кнопки
-    buttons = []
+    # Список форматов под превью
+    quality_list = "\n".join([
+        f"🎥 {f['resolution']} — {f['size']} МБ" if f["size"] else f"🎥 {f['resolution']}"
+        for f in formats
+    ])
 
+    # Компактные кнопки (2 в ряд)
+    buttons = []
+    row = []
     for f in formats:
-        text = f"{f['resolution']} — {f['size']} МБ" if f["size"] else f["resolution"]
-        buttons.append([
-            InlineKeyboardButton(
-                text=text,
-                callback_data=f"yt_{f['format_id']}_{url}"
-            )
-        ])
+        text = f"🎥 {f['resolution']}"
+        row.append(InlineKeyboardButton(text=text, callback_data=f"yt_{f['format_id']}"))
+
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+
+    if row:
+        buttons.append(row)
 
     # Аудио
     if audio_id:
         buttons.append([
-            InlineKeyboardButton(
-                text="🎵 Аудио",
-                callback_data=f"yta_{audio_id}_{url}"
-            )
+            InlineKeyboardButton(text="🎵 Аудио", callback_data=f"yta_{audio_id}")
         ])
 
     # Канал
     if channel_url:
         buttons.append([
-            InlineKeyboardButton(
-                text=f"📺 Канал: {channel}",
-                url=channel_url
-            )
+            InlineKeyboardButton(text=f"📺 Канал: {channel}", url=channel_url)
         ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     await message.answer_photo(
         photo=thumbnail,
-        caption=f"<b>{title}</b>\n\nИсточник: #{channel}",
+        caption=f"<b>{title}</b>\n\n{quality_list}",
         parse_mode="HTML",
         reply_markup=kb
     )
+
 @video_router.callback_query(F.data.startswith("yt_"))
-async def youtube_download(callback: types.CallbackQuery):
-    _, format_id, url = callback.data.split("_", 2)
+async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
+    format_id = callback.data.split("_")[1]
+
+    data = await state.get_data()
+    url = data.get("yt_url")
+
+    if not url:
+        await callback.answer("Ошибка: URL потерян", show_alert=True)
+        return
 
     ydl_opts = {
         "format": format_id,
@@ -338,8 +349,15 @@ async def youtube_download(callback: types.CallbackQuery):
     await callback.answer()
 
 @video_router.callback_query(F.data.startswith("yta_"))
-async def youtube_audio(callback: types.CallbackQuery):
-    _, format_id, url = callback.data.split("_", 2)
+async def youtube_audio(callback: types.CallbackQuery, state: FSMContext):
+    format_id = callback.data.split("_")[1]
+
+    data = await state.get_data()
+    url = data.get("yt_url")
+
+    if not url:
+        await callback.answer("Ошибка: URL потерян", show_alert=True)
+        return
 
     ydl_opts = {
         "format": format_id,
