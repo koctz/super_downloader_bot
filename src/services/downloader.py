@@ -53,17 +53,25 @@ class VideoDownloader:
             except: pass
         return output_path
     def _process_video(self, input_path, duration, is_insta=False):
+        """
+        Обработка видео перед отправкой.
+        Если файл > 50MB, мы больше не сжимаем его до потери качества, 
+        так как теперь у нас есть MTProto (Pyrogram).
+        """
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
 
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
-        MAX_SIZE_BYTES = 46 * 1024 * 1024
+        
+        # Лимиты
+        BOT_API_LIMIT = 48 * 1024 * 1024  # 48 МБ (запас под 50)
+        MTPROTO_LIMIT = 1950 * 1024 * 1024 # 1.95 ГБ (запас под 2ГБ)
 
-        # Быстрая перепаковка (YouTube/VK/TikTok)
-        if file_size <= MAX_SIZE_BYTES and not is_insta:
-            print(f"DEBUG: Быстрая перепаковка: {input_path}")
+        # 1. Если видео проходит в лимиты MTProto и это не Instagram — делаем копирование (мгновенно)
+        if file_size <= MTPROTO_LIMIT and not is_insta:
+            print(f"DEBUG: Прямая перепаковка (High Quality): {input_path}")
             cmd = [
                 "ffmpeg", "-y", "-i", input_path,
                 "-c", "copy",
@@ -72,10 +80,12 @@ class VideoDownloader:
                 output_path
             ]
         else:
-            # Глубокая обработка (Instagram)
-            print(f"DEBUG: Глубокая обработка (Instagram): {input_path}")
-
-            target_total_bitrate = int((MAX_SIZE_BYTES * 8) / max(duration, 1))
+            # 2. Если это Instagram или видео безумно огромное (> 2ГБ) — сжимаем
+            print(f"DEBUG: Глубокая обработка/сжатие: {input_path}")
+            
+            # Целевой размер для сжатия (если > 2ГБ, жмем до 1.9ГБ)
+            target_size = MTPROTO_LIMIT if file_size > MTPROTO_LIMIT else BOT_API_LIMIT
+            target_total_bitrate = int((target_size * 8) / max(duration, 1))
             video_bitrate = int(target_total_bitrate * 0.85)
 
             cmd = [
@@ -89,11 +99,11 @@ class VideoDownloader:
                 "-profile:v", "main",
                 "-level", "3.1",
                 "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                "-video_track_timescale", "30000"
+                "-movflags", "+faststart"
             ]
 
-            if file_size > MAX_SIZE_BYTES:
+            # Если всё же нужно жесткое сжатие по битрейту
+            if file_size > MTPROTO_LIMIT or is_insta:
                 cmd.extend([
                     "-b:v", str(video_bitrate),
                     "-maxrate", str(video_bitrate),
@@ -103,15 +113,20 @@ class VideoDownloader:
             cmd.append(output_path)
 
         try:
-            subprocess.run(cmd, capture_output=True, timeout=300)
+            # Запускаем ffmpeg
+            result = subprocess.run(cmd, capture_output=True, timeout=600)
+            if result.returncode != 0:
+                print(f"FFMPEG ERROR: {result.stderr.decode()}")
+                # Если copy не удался (бывает из-за кодеков), пробуем перекодировать
+                if "-c copy" in " ".join(cmd):
+                    return self._process_video_fallback(input_path, output_path)
+                    
         except subprocess.TimeoutExpired:
-            raise DownloadError("Видео слишком длинное для обработки сервером.")
+            raise DownloadError("Обработка видео заняла слишком много времени.")
 
         if os.path.exists(input_path):
-            try:
-                os.remove(input_path)
-            except:
-                pass
+            try: os.remove(input_path)
+            except: pass
 
         return output_path
         
@@ -145,9 +160,10 @@ class VideoDownloader:
                 )
 
     def _get_opts(self, url, filename_tmpl):
-        # Ограничиваем формат до 720p сразу при скачивании
+        """Настройки скачивания: теперь разрешаем 1080p"""
         opts = {
-            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
+            # Пробуем взять 1080p, если нет - 720p, если нет - лучшее доступное
+            'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
             'outtmpl': filename_tmpl,
             'noplaylist': True,
             'quiet': True,
@@ -156,11 +172,14 @@ class VideoDownloader:
             'nocheckcertificate': True,
             'user_agent': random.choice(self.user_agents),
         }
+        
         if "instagram.com" in url:
             cookies_path = os.path.join(os.getcwd(), "cookies.txt")
-            if os.path.exists(cookies_path): opts['cookiefile'] = cookies_path
+            if os.path.exists(cookies_path): 
+                opts['cookiefile'] = cookies_path
         elif "youtube.com" in url or "youtu.be" in url:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
+            
         return opts
 
     def _download_sync(self, url: str, temp_path_raw: str) -> DownloadedVideo:
