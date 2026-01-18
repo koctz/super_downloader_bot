@@ -60,3 +60,42 @@ def increment_downloads(user_id):
 
         conn.commit()
         conn.close()
+def get_users(offset=0, limit=20):
+    with _lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, username, full_name, lang, downloads, last_active
+            FROM users
+            ORDER BY id ASC
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+
+
+def count_users():
+    with _lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total = cursor.fetchone()[0]
+
+        conn.close()
+        return total
+
+
+def get_all_user_ids():
+    with _lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id FROM users")
+        rows = cursor.fetchall()
+
+        conn.close()
+        return [row[0] for row in rows]
