@@ -6,6 +6,7 @@ from src.handlers.video import video_router
 
 async def start_bot():
     init_db()
+    print("Используемый токен:", conf.bot_token)
     # Инициализация бота
     bot = Bot(token=conf.bot_token, parse_mode="HTML")
     
