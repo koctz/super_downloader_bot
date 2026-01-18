@@ -13,6 +13,8 @@ class Config:
     channel_id: str   # Добавили ID канала
     channel_url: str  # Добавили ссылку на канал
     admin_id: str  # Добавь это поле
+    api_id: int
+    api_hash: str
 
 # Проверка токена
 token = os.getenv("BOT_TOKEN")
@@ -23,13 +25,22 @@ if not token:
 channel_id = os.getenv("CHANNEL_ID", "-100123456789")
 channel_url = os.getenv("CHANNEL_URL", "https://t.me/your_channel")
 
+# Получаем API данные
+raw_api_id = os.getenv("API_ID")
+api_hash = os.getenv("API_HASH")
+
+if not raw_api_id or not api_hash:
+    raise ValueError("API_ID или API_HASH не найдены в .env файле!")
+
 conf = Config(
     bot_token=token,
     download_path=os.path.join(os.getcwd(), "downloads"),
     max_file_size=50 * 1024 * 1024,
-    channel_id=channel_id,
-    channel_url=channel_url,
+    channel_id=os.getenv("CHANNEL_ID"),  # Просто берем из .env
+    channel_url=os.getenv("CHANNEL_URL"), # Просто берем из .env
     admin_id=os.getenv("ADMIN_ID"),
+    api_id=int(os.getenv("API_ID")),
+    api_hash=os.getenv("API_HASH")
 )
 
 # Автосоздание папки data
