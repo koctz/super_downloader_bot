@@ -266,12 +266,14 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 # --- ОБРАБОТКА ССЫЛОК ---
+# --- YOUTUBE ---
+
 from utils.youtube import get_youtube_formats
-import yt_dlp
+from aiogram.types import FSInputFile
 
 @video_router.message(
-    F.text.contains("youtube.com") |
-    F.text.contains("youtu.be")
+    (F.text.contains("youtube.com") | F.text.contains("youtu.be")) &
+    ~DownloadStates.choosing_format
 )
 async def youtube_menu(message: types.Message, state: FSMContext):
     url = message.text.strip()
@@ -311,6 +313,7 @@ async def youtube_menu(message: types.Message, state: FSMContext):
         reply_markup=kb
     )
 
+
 @video_router.callback_query(F.data.startswith("yt_"))
 async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
     quality = callback.data.split("_")[1]  # "720" или "360"
@@ -338,6 +341,7 @@ async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.answer()
 
+
 @video_router.callback_query(F.data == "yta")
 async def youtube_audio(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -355,6 +359,7 @@ async def youtube_audio(callback: types.CallbackQuery, state: FSMContext):
     )
 
     await callback.answer()
+
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
