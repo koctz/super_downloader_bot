@@ -4,8 +4,8 @@ from aiogram.filters import Command
 # Создаем роутер (маршрутизатор)
 common_router = Router()
 
-@common_router.message(Command("start"))
-async def cmd_start(message: types.Message):
+@common_router.message(Command("info"))
+async def cmd_info(message: types.Message):
     user_name = message.from_user.first_name
     text = (
         f"👋 Привет, {user_name}!\n\n"
