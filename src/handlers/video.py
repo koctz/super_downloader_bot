@@ -46,6 +46,34 @@ STRINGS = {
         "promo": "\n\n🚀 <b>Скачано через: @youtodownloadbot</b>",
         "err_heavy": "❌ Видео слишком тяжелое для Telegram.",
         "err_timeout": "❌ Видео обрабатывалось слишком долго. Попробуй другое."
+    },
+    "en": {
+        "choose_lang": "Choose language / Выберите язык:",
+        "welcome": "Hello, {name}! 👋\n\nI will help you download videos from <b>TikTok, YouTube, Instagram or VK</b>.\nJust send me a link!",
+        "sub_req": "⚠️ <b>You must subscribe to our channel to use this bot!</b>\n\nThis helps us keep the server running.",
+        "btn_sub": "✅ Subscribe",
+        "btn_check_sub": "🔄 Check subscription",
+        "btn_channel": "📢 Our Channel",
+        "btn_help": "🆘 Help",
+        "btn_video": "🎬 Video",
+        "btn_audio": "🎵 Audio (MP3)",
+        "btn_cancel": "❌ Cancel",
+        "btn_settings": "⚙️ Settings",
+        "btn_change_lang": "🌐 Change language",
+        "btn_back": "⬅️ Back",
+        "link_ok": "Link received! What should I download?",
+        "help_text": "<b>How to use the bot?</b>\n\nJust send a video link from TikTok, YouTube, Instagram or VK — I will offer download options.",
+        "sub_ok": "✅ Thanks for subscribing! Now you can send links.",
+        "sub_fail": "❌ You are still not subscribed!",
+        "cancel_text": "Action canceled. Send me a new link 👇",
+        "err_lost": "Error: link lost. Send it again.",
+        "step_1": "⏳ <b>[1/4]</b> Analyzing link...",
+        "step_2": "📥 <b>[2/4]</b> Downloading to server...",
+        "step_3": "⚙️ <b>[3/4]</b> Processing and compressing...",
+        "step_4": "📤 <b>[4/4]</b> Sending file to you...",
+        "promo": "\n\n🚀 <b>Via: @youtodownloadbot</b>",
+        "err_heavy": "❌ Video is too heavy for Telegram.",
+        "err_timeout": "❌ Processing timeout. Try another video."
     }
 }
 
