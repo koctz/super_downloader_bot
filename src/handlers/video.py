@@ -380,28 +380,27 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
 
             # --- ВЫБОР СПОСОБА ОТПРАВКИ ---
             if file_size_mb > 50:
-                # Файл тяжелый (> 50МБ) — шлем через Pyrogram (MTProto)
-                async with pyro_app:
-                    if mode == 'video':
-                        await pyro_app.send_video(
-                            chat_id=callback.message.chat.id,
-                            video=video_path,
-                            caption=caption,
-                            duration=video_data.duration,
-                            width=video_data.width,
-                            height=video_data.height,
-                            supports_streaming=True,
-                            parse_mode=types.ParseMode.HTML # Pyrogram использует свои константы, но строки пройдут
-                        )
-                    else:
-                        await pyro_app.send_audio(
-                            chat_id=callback.message.chat.id,
-                            audio=video_path,
-                            caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
-                            duration=video_data.duration,
-                            performer=video_data.author,
-                            title=video_data.title
-                        )
+                # Файл тяжелый (> 50МБ) — шлем через Pyrogram
+                # ВАЖНО: Мы больше не пишем "async with pyro_app"
+                if mode == 'video':
+                    await pyro_app.send_video(
+                        chat_id=callback.message.chat.id,
+                        video=video_path,
+                        caption=caption,
+                        duration=video_data.duration,
+                        width=video_data.width,
+                        height=video_data.height,
+                        supports_streaming=True
+                    )
+                else:
+                    await pyro_app.send_audio(
+                        chat_id=callback.message.chat.id,
+                        audio=video_path,
+                        caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
+                        duration=video_data.duration,
+                        performer=video_data.author,
+                        title=video_data.title
+                    )
             else:
                 # Файл легкий — шлем через обычный aiogram (Bot API)
                 file = FSInputFile(video_path)
