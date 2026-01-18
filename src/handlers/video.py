@@ -376,6 +376,8 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
                     parse_mode="HTML", title=video_data.title, performer=video_data.author,
                     duration=video_data.duration, request_timeout=300
                 )
+            from src.db import increment_downloads
+            increment_downloads(callback.from_user.id)
 
             await status_msg.delete()
             await state.clear()
