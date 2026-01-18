@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from src.services.downloader import VideoDownloader
 
 # Настройки 
+from src.db import add_user
 from src.config import conf
 
 CHANNEL_ID = conf.channel_id
@@ -111,7 +112,13 @@ async def is_subscribed(bot, user_id):
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
     await state.clear()
-    register_user(message.from_user.id)
+
+    add_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+        lang="ru"
+    )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -119,8 +126,9 @@ async def start_cmd(message: types.Message, state: FSMContext):
             InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
         ]
     ])
-    await message.answer(STRINGS["ru"]["choose_lang"], parse_mode="HTML", reply_markup=kb)
+    await message.answer(STRINGS["ru"]["choose_lang"], reply_markup=kb)
     await state.set_state(DownloadStates.choosing_language)
+
 
 @video_router.callback_query(F.data.startswith("setlang_"))
 async def set_language(callback: types.CallbackQuery, state: FSMContext):
