@@ -14,8 +14,8 @@ async def start_bot():
     
     # Регистрируем роутеры
     # Порядок важен: специфичные обработчики лучше ставить раньше, общие - позже
-    dp.include_router(video_router)
     dp.include_router(common_router)
+    dp.include_router(video_router)
 
     
     # Удаляем вебхуки (если были) и запускаем поллинг
