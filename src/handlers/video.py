@@ -1,4 +1,5 @@
 import os
+import yt_dlp
 import asyncio
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
