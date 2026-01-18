@@ -22,6 +22,16 @@ downloader = VideoDownloader()
 # Инициализируем Telethon
 tele_client = TelegramClient('telethon_bot', conf.api_id, conf.api_hash)
 
+def get_main_keyboard(lang: str, user_id: int):
+    kb_list = [
+        [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
+        [InlineKeyboardButton(text=STRINGS[lang]["btn_help"], callback_data="help_info")],
+        [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
+    ]
+    if str(user_id) == str(conf.admin_id):
+        kb_list.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=kb_list)
+
 # --- ЛОКАЛИЗАЦИЯ ---
 STRINGS = {
     "ru": {
@@ -187,6 +197,7 @@ async def process_video_url(message: types.Message, state: FSMContext):
     add_user(user_id=message.from_user.id, username=message.from_user.username, full_name=message.from_user.full_name, lang="ru")
     data = await state.get_data()
     lang = data.get("lang", "ru")
+    
     if not await is_subscribed(message.bot, message.from_user.id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=STRINGS[lang]["btn_sub"], url=CHANNEL_URL)],
@@ -194,13 +205,43 @@ async def process_video_url(message: types.Message, state: FSMContext):
         ])
         await message.answer(STRINGS[lang]["sub_req"], parse_mode="HTML", reply_markup=kb)
         return
-    await state.update_data(download_url=message.text.strip())
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_video"], callback_data="dl_video"),
-         InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")],
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")]
-    ])
-    await message.answer(STRINGS[lang]["link_ok"], parse_mode="HTML", reply_markup=kb)
+
+    url = message.text.strip()
+    await state.update_data(download_url=url)
+    
+    # Пытаемся получить информацию о качестве (только для YouTube видео)
+    wait_msg = await message.answer("⏳ Анализирую видео...")
+    yt_info = await downloader.get_formats(url)
+    await wait_msg.delete()
+
+    if yt_info and yt_info.get("formats"):
+        # Если это обычный YouTube
+        caption = (f"🎬 <b>{yt_info['title']}</b>\n\n"
+                   f"👤 Канал: <a href='{yt_info['uploader_url']}'>{yt_info['uploader']}</a>\n"
+                   f"⚙️ Выберите качество видео или аудио:")
+        
+        kb_list = []
+        row = []
+        for q in yt_info['formats']:
+            row.append(InlineKeyboardButton(text=f"📺 {q}p", callback_data=f"dl_video_{q}"))
+            if len(row) == 2:
+                kb_list.append(row)
+                row = []
+        if row: kb_list.append(row)
+        
+        kb_list.append([InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")])
+        kb_list.append([InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")])
+        
+        await message.answer_photo(photo=yt_info['thumbnail'], caption=caption, 
+                                   parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
+    else:
+        # Для Shorts, TikTok, VK, Insta
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=STRINGS[lang]["btn_video"], callback_data="dl_video"),
+             InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")],
+            [InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")]
+        ])
+        await message.answer(STRINGS[lang]["link_ok"], parse_mode="HTML", reply_markup=kb)
 
 @video_router.callback_query(F.data == "check_sub")
 async def check_sub_handler(callback: types.CallbackQuery, state: FSMContext):
@@ -215,12 +256,16 @@ async def check_sub_handler(callback: types.CallbackQuery, state: FSMContext):
 async def cancel_download_handler(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", "ru")
-    
-    # Очищаем данные о ссылке, но сохраняем язык
     await state.update_data(download_url=None)
     
-    # Редактируем сообщение, уведомляя об отмене
-    await callback.message.edit_text(STRINGS[lang]["cancel_text"], parse_mode="HTML")
+    # Получаем клавиатуру с кнопками Настройки, Помощь и Админка
+    kb = get_main_keyboard(lang, callback.from_user.id)
+    
+    if callback.message.photo:
+        await callback.message.delete()
+        await callback.message.answer(STRINGS[lang]["cancel_text"], parse_mode="HTML", reply_markup=kb)
+    else:
+        await callback.message.edit_text(STRINGS[lang]["cancel_text"], parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 # --- СКАЧИВАНИЕ И ПРОГРЕСС ---
 
