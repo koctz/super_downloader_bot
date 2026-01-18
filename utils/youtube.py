@@ -16,37 +16,31 @@ def get_youtube_formats(url: str):
     channel_url = info.get("channel_url")
 
     formats = []
+
+    # Оставляем только 720p и 360p
     for f in info["formats"]:
-        # Берём только форматы, которые можно скачать как единый файл
         if (
             f.get("vcodec") != "none" and
             f.get("acodec") != "none" and
-            f.get("height") and
-            f.get("ext") in ("mp4", "webm")
+            f.get("height") in (720, 360)
         ):
             size = None
             if f.get("filesize"):
                 size = round(f["filesize"] / 1024 / 1024)
 
-            resolution = f"{f['height']}p"
-
             formats.append({
                 "format_id": f["format_id"],
-                "resolution": resolution,
+                "resolution": f"{f['height']}p",
                 "size": size,
             })
 
-    # Сортировка по качеству (от высокого к низкому)
+    # Сортировка: 720 → 360
     formats.sort(key=lambda x: int(x["resolution"][:-1]), reverse=True)
 
-    # Аудио
+    # Аудио (любое доступное)
     audio_format = None
     for f in info["formats"]:
-        if (
-            f.get("vcodec") == "none" and
-            f.get("acodec") != "none" and
-            f.get("filesize")
-        ):
+        if f.get("vcodec") == "none" and f.get("acodec") != "none":
             audio_format = f["format_id"]
             break
 
