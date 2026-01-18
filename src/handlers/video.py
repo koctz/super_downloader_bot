@@ -272,8 +272,8 @@ from utils.youtube import get_youtube_formats
 from aiogram.types import FSInputFile
 
 @video_router.message(
-    (F.text.contains("youtube.com") | F.text.contains("youtu.be")) &
-    ~DownloadStates.choosing_format
+    F.text.contains("youtube.com") |
+    F.text.contains("youtu.be")
 )
 async def youtube_menu(message: types.Message, state: FSMContext):
     url = message.text.strip()
@@ -286,13 +286,11 @@ async def youtube_menu(message: types.Message, state: FSMContext):
     formats = data["formats"]
     audio_id = data["audio_format"]
 
-    # Список форматов под превью
     quality_list = "\n".join([
         f"🎥 {f['resolution']} — {f['size']} МБ" if f["size"] else f"🎥 {f['resolution']}"
         for f in formats
     ])
 
-    # Кнопки
     buttons = []
 
     if any(f["resolution"] == "720p" for f in formats):
@@ -316,7 +314,7 @@ async def youtube_menu(message: types.Message, state: FSMContext):
 
 @video_router.callback_query(F.data.startswith("yt_"))
 async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
-    quality = callback.data.split("_")[1]  # "720" или "360"
+    quality = callback.data.split("_")[1]
 
     data = await state.get_data()
     url = data.get("yt_url")
@@ -325,11 +323,9 @@ async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: URL потерян", show_alert=True)
         return
 
-    # 720p — downloader сам скачает
     if quality == "720":
         video = await downloader.download(url, mode="video")
 
-    # 360p — ограничиваем формат
     elif quality == "360":
         url = url + "&quality=360p"
         video = await downloader.download(url, mode="video")
@@ -340,7 +336,6 @@ async def youtube_download(callback: types.CallbackQuery, state: FSMContext):
     )
 
     await callback.answer()
-
 
 @video_router.callback_query(F.data == "yta")
 async def youtube_audio(callback: types.CallbackQuery, state: FSMContext):
