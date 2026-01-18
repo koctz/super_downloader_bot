@@ -368,7 +368,12 @@ async def youtube_audio(callback: types.CallbackQuery, state: FSMContext):
         info = ydl.extract_info(url)
         file_path = ydl.prepare_filename(info)
 
-    await callback.message.answer_audio(audio=open(file_path, "rb"))
+    # Отправляем как документ — работает всегда
+    await callback.message.answer_document(
+        document=open(file_path, "rb"),
+        caption=f"🎵 {info.get('title')}"
+    )
+
     await callback.answer()
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
