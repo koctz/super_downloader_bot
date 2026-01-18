@@ -1,4 +1,3 @@
-```python
 import os
 import asyncio
 from aiogram import Router, types, F
@@ -425,4 +424,3 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
         except:
             blocked += 1
     await status_msg.edit_text(f"✅ Готово! Успешно: {count}, Блок: {blocked}", parse_mode="HTML")
-```
