@@ -125,13 +125,44 @@ class VideoDownloader:
             
         return opts
 
-    def _download_sync(self, url: str, temp_path_raw: str, progress_callback=None) -> DownloadedVideo:
-        opts = self._get_opts(url, temp_path_raw, progress_callback)
+    async def download(self, url: str, mode: str = 'video', progress_callback=None) -> DownloadedVideo:
+        url = self._normalize_url(url)
+        unique_id = str(abs(hash(url)))[:8]
+        temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
+        
+        # ЗАХВАТЫВАЕМ ТЕКУЩИЙ LOOP БОТА
+        loop = asyncio.get_running_loop()
+
+        if "tiktok.com" in url:
+            data = await self._download_tiktok_via_api(url, temp_path)
+        else:
+            # ПЕРЕДАЕМ LOOP В СИНХРОННЫЙ ПОТОК
+            data = await asyncio.to_thread(self._download_sync, url, temp_path, progress_callback, loop)
+
+        if mode == 'audio':
+            audio_path = self._process_audio(data.path)
+            data.path = audio_path
+            data.file_size = os.path.getsize(audio_path)
+        
+        return data
+
+    # 2. Обновляем _download_sync, чтобы он использовал переданный loop
+    def _download_sync(self, url: str, temp_path_raw: str, progress_callback=None, loop=None) -> DownloadedVideo:
+        def ydl_hook(d):
+            if d['status'] == 'downloading' and progress_callback and loop:
+                p = d.get('_percent_str', '0%').replace('\x1b[0;32m', '').replace('\x1b[0m', '').strip()
+                # Используем переданный loop вместо asyncio.get_event_loop()
+                loop.call_soon_threadsafe(
+                    lambda: asyncio.create_task(progress_callback(p))
+                )
+
+        opts = self._get_opts(url, temp_path_raw, progress_callback=None) # Вызываем без колбэка
+        opts['progress_hooks'] = [ydl_hook] # Назначаем наш новый хук с привязкой к loop
+
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_path = ydl.prepare_filename(info)
 
-            # Проверка расширения (yt-dlp может поменять .mp4 на .mkv)
             if not os.path.exists(downloaded_path):
                 base_no_ext = os.path.splitext(downloaded_path)[0]
                 for ext in [".mp4", ".mkv", ".webm"]:
@@ -161,14 +192,15 @@ class VideoDownloader:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url)))[:8]
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
+        
+        # ЗАХВАТЫВАЕМ ТЕКУЩИЙ LOOP БОТА
+        loop = asyncio.get_running_loop()
 
-        # Для ТикТока через API проценты реализовать сложнее, оставляем как есть
         if "tiktok.com" in url:
-            # Здесь можно было бы добавить фейковый прогресс, но пока просто качаем
             data = await self._download_tiktok_via_api(url, temp_path)
         else:
-            # Передаем колбэк в синхронный поток
-            data = await asyncio.to_thread(self._download_sync, url, temp_path, progress_callback)
+            # ПЕРЕДАЕМ LOOP В СИНХРОННЫЙ ПОТОК
+            data = await asyncio.to_thread(self._download_sync, url, temp_path, progress_callback, loop)
 
         if mode == 'audio':
             audio_path = self._process_audio(data.path)
@@ -176,7 +208,6 @@ class VideoDownloader:
             data.file_size = os.path.getsize(audio_path)
         
         return data
-
     async def _download_tiktok_via_api(self, url: str, temp_path: str) -> DownloadedVideo:
         api_url = "https://www.tikwm.com/api/"
         async with aiohttp.ClientSession() as session:
