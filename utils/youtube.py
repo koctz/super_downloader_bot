@@ -1,16 +1,6 @@
 import yt_dlp
 
 def get_youtube_formats(url: str):
-    """
-    Возвращает:
-    - title: название ролика
-    - thumbnail: ссылка на превью
-    - channel: название канала
-    - channel_url: ссылка на канал
-    - formats: список доступных видеоформатов
-    - audio_format: ID аудиоформата
-    """
-
     ydl_opts = {
         "quiet": True,
         "skip_download": True,
@@ -27,30 +17,30 @@ def get_youtube_formats(url: str):
 
     formats = []
     for f in info["formats"]:
-        # Берём только форматы, где есть и видео, и аудио
-        if f.get("vcodec") != "none" and f.get("acodec") != "none":
-            size = None
-            if f.get("filesize"):
-                size = round(f["filesize"] / 1024 / 1024)
-
-            resolution = f.get("resolution")
-            if not resolution:
-                if f.get("height"):
-                    resolution = f"{f['height']}p"
-                else:
-                    resolution = "unknown"
+        # Фильтруем только реальные скачиваемые форматы
+        if (
+            f.get("vcodec") != "none" and
+            f.get("acodec") != "none" and
+            f.get("ext") == "mp4" and
+            f.get("filesize") and
+            f.get("height")
+        ):
+            size = round(f["filesize"] / 1024 / 1024)
+            resolution = f"{f['height']}p"
 
             formats.append({
                 "format_id": f["format_id"],
                 "resolution": resolution,
-                "ext": f["ext"],
                 "size": size,
             })
 
-    # Ищем лучший аудиоформат
+    # Сортировка по качеству (от высокого к низкому)
+    formats.sort(key=lambda x: int(x["resolution"][:-1]), reverse=True)
+
+    # Аудио
     audio_format = None
     for f in info["formats"]:
-        if f.get("vcodec") == "none" and f.get("acodec") != "none":
+        if f.get("vcodec") == "none" and f.get("acodec") != "none" and f.get("filesize"):
             audio_format = f["format_id"]
             break
 
