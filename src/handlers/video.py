@@ -221,8 +221,10 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
     if not url: return await callback.answer(STRINGS[lang]["err_lost"])
 
     parts = callback.data.split("_")
-    mode, quality = parts[1], (parts[2] if len(parts) > 2 else None)
+    mode = parts[1]
+    quality = parts[2] if len(parts) > 2 else None
 
+    # Заменяем превью/кнопки на статус
     if callback.message.photo:
         status_msg = await callback.message.answer(STRINGS[lang]["step_1"])
         await callback.message.delete()
@@ -230,36 +232,67 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         status_msg = await callback.message.edit_text(STRINGS[lang]["step_1"])
     
     video_path = None
-    loop = asyncio.get_running_loop()
+    # Явно берем текущий цикл событий
+    current_loop = asyncio.get_event_loop()
 
-    async def update_status_safe(text):
-        try: await status_msg.edit_text(text, parse_mode="HTML")
-        except: pass
-
-    def download_progress(p_str):
-        loop.call_soon_threadsafe(lambda: asyncio.create_task(update_status_safe(f"📥 <b>[2/4]</b> Загрузка: {p_str}")))
+    # Функция для безопасного обновления текста из любого потока
+    def sync_progress_caller(p_str):
+        async def update_text():
+            try:
+                await status_msg.edit_text(f"📥 <b>[2/4]</b> Загрузка: {p_str}", parse_mode="HTML")
+            except:
+                pass
+        # Прокидываем задачу в основной поток
+        asyncio.run_coroutine_threadsafe(update_text(), current_loop)
 
     async def upload_progress(current, total):
         p = (current / total) * 100
-        if p % 20 == 0: # Реже обновляем статус отправки
-            await update_status_safe(f"📤 <b>[4/4]</b> Отправка: {p:.1f}%")
+        try:
+            await status_msg.edit_text(f"📤 <b>[4/4]</b> Отправка: {p:.1f}%", parse_mode="HTML")
+        except:
+            pass
 
     try:
-        video_data = await downloader.download(url, mode=mode, progress_callback=download_progress, quality=quality)
+        # Передаем нашу обертку progress_callback
+        video_data = await downloader.download(
+            url, 
+            mode=mode, 
+            progress_callback=sync_progress_caller, 
+            quality=quality
+        )
+        
         video_path = video_data.path
         await status_msg.edit_text(STRINGS[lang]["step_3"])
         
-        if not tele_client.is_connected(): await tele_client.start(bot_token=conf.bot_token)
+        if not tele_client.is_connected():
+            await tele_client.start(bot_token=conf.bot_token)
         
         caption = f"🎬 <b>{video_data.title[:900]}</b>{STRINGS[lang]['promo']}"
-        attr = [DocumentAttributeVideo(duration=int(video_data.duration or 0), w=video_data.width, h=video_data.height, supports_streaming=True)]
+        attr = [DocumentAttributeVideo(
+            duration=int(video_data.duration or 0), 
+            w=video_data.width, 
+            h=video_data.height, 
+            supports_streaming=True
+        )]
         
-        await tele_client.send_file(callback.message.chat.id, video_path, caption=caption, attributes=attr if mode=='video' else [], parse_mode='html', progress_callback=upload_progress)
+        await tele_client.send_file(
+            callback.message.chat.id, 
+            video_path, 
+            caption=caption, 
+            attributes=attr if mode=='video' else [], 
+            parse_mode='html', 
+            progress_callback=upload_progress
+        )
         await status_msg.delete()
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:50]}")
+        print(f"Download Error: {e}")
+        try:
+            await status_msg.edit_text(f"❌ Ошибка: {str(e)[:50]}")
+        except:
+            pass
     finally:
-        if video_path and os.path.exists(video_path): os.remove(video_path)
+        if video_path and os.path.exists(video_path):
+            os.remove(video_path)
 
 @video_router.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
