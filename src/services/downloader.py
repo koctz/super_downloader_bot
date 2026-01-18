@@ -147,7 +147,7 @@ class VideoDownloader:
     def _get_opts(self, url, filename_tmpl):
         # Ограничиваем формат до 720p сразу при скачивании
         opts = {
-            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
+            'format': format_id or 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best',
             'outtmpl': filename_tmpl,
             'noplaylist': True,
             'quiet': True,
@@ -164,7 +164,7 @@ class VideoDownloader:
         return opts
 
     def _download_sync(self, url: str, temp_path_raw: str) -> DownloadedVideo:
-        opts = self._get_opts(url, temp_path_raw)
+        opts = self._get_opts(url, temp_path_raw, format_id)
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -199,7 +199,8 @@ class VideoDownloader:
                 file_size=os.path.getsize(final_path),
             )
 
-    async def download(self, url: str, mode: str = 'video') -> DownloadedVideo:
+    async def download(self, url, mode='video', format_id=None):
+    data = await asyncio.to_thread(self._download_sync, url, temp_path, format_id)
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url)))[:8]
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
