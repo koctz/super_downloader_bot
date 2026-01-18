@@ -22,8 +22,7 @@ downloader = VideoDownloader()
 pyro_app = PyroClient(
     "bot_session",
     api_id=conf.api_id,   # Убедись, что в config.py есть эти поля
-    api_hash=conf.api_hash,
-    bot_token=conf.bot_token
+    api_hash=conf.api_hash
 )
 
 # --- ЛОКАЛИЗАЦИЯ ---
