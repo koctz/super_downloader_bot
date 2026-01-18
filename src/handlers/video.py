@@ -1,15 +1,24 @@
 import os
 import asyncio
+import logging
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from src.services.downloader import VideoDownloader
 
-# Настройки 
+from src.services.downloader import VideoDownloader
 from src.config import conf
+
+# --- БАЗА ДАННЫХ ---
+from src.db import (
+    add_or_update_user,
+    update_last_active,
+    increment_downloads,
+    get_users_page,
+    get_users_count
+)
 
 CHANNEL_ID = conf.channel_id
 CHANNEL_URL = conf.channel_url
@@ -77,7 +86,7 @@ STRINGS = {
     }
 }
 
-# Состояния
+# --- СОСТОЯНИЯ ---
 class DownloadStates(StatesGroup):
     choosing_language = State()
     choosing_format = State()
@@ -85,19 +94,15 @@ class DownloadStates(StatesGroup):
 class AdminStates(StatesGroup):
     waiting_for_broadcast = State()
 
-# --- СЛУЖЕБНЫЕ ФУНКЦИИ ---
+# --- ФУНКЦИИ ---
 
-def register_user(user_id: int):
-    user_id_str = str(user_id)
-    if not os.path.exists(conf.users_db_path):
-        os.makedirs(os.path.dirname(conf.users_db_path), exist_ok=True)
-        with open(conf.users_db_path, "w") as f:
-            pass
-    with open(conf.users_db_path, "r") as f:
-        users = f.read().splitlines()
-    if user_id_str not in users:
-        with open(conf.users_db_path, "a") as f:
-            f.write(user_id_str + "\n")
+def register_user(message: types.Message, lang: str = "ru"):
+    add_or_update_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+        lang=lang,
+    )
 
 async def is_subscribed(bot, user_id):
     try:
@@ -111,7 +116,8 @@ async def is_subscribed(bot, user_id):
 @video_router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
     await state.clear()
-    register_user(message.from_user.id)
+
+    register_user(message, lang="ru")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -126,6 +132,8 @@ async def start_cmd(message: types.Message, state: FSMContext):
 async def set_language(callback: types.CallbackQuery, state: FSMContext):
     lang = callback.data.split("_")[1]
     await state.update_data(lang=lang)
+
+    register_user(callback, lang=lang)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
@@ -226,27 +234,20 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
 
     page = int(callback.data.split("_")[-1])
 
-    if not os.path.exists(conf.users_db_path):
-        await callback.message.edit_text("Пользователей пока нет.", parse_mode="HTML")
-        await callback.answer()
-        return
-
-    with open(conf.users_db_path, "r") as f:
-        users = f.read().splitlines()
-
-    total = len(users)
-    start = page * USERS_PER_PAGE
-    end = start + USERS_PER_PAGE
-    page_users = users[start:end]
+    users = get_users_page(page, USERS_PER_PAGE)
+    total = get_users_count()
 
     lines = []
-    for uid in page_users:
-        try:
-            await callback.bot.get_chat_member(chat_id=uid, user_id=uid)
-            status = "🟢"
-        except:
-            status = "🔴"
-        lines.append(f"{status} <code>{uid}</code>")
+    for row in users:
+        uid = row["id"]
+        username = row["username"] or "-"
+        lang = row["lang"] or "-"
+        downloads = row["downloads"] or 0
+        status = "🟢" if not row["blocked"] else "🔴"
+
+        lines.append(
+            f"{status} <code>{uid}</code> | {username} | {lang} | 📥 {downloads}"
+        )
 
     text = (
         f"👥 <b>Пользователи</b>\n"
@@ -258,7 +259,7 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
     buttons = []
     if page > 0:
         buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_users_page_{page - 1}"))
-    if end < total:
+    if (page + 1) * USERS_PER_PAGE < total:
         buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"admin_users_page_{page + 1}"))
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -273,9 +274,11 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
-    register_user(message.from_user.id)
     data = await state.get_data()
     lang = data.get("lang", "ru")
+
+    register_user(message, lang=lang)
+    update_last_active(message.from_user.id)
 
     if not await is_subscribed(message.bot, message.from_user.id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -377,6 +380,16 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
                     duration=video_data.duration, request_timeout=300
                 )
 
+            increment_downloads(callback.from_user.id)
+            update_last_active(callback.from_user.id)
+
+            # Кнопка "Назад в меню"
+            menu_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=STRINGS[lang]["btn_back"], callback_data="back_to_main")]
+            ])
+
+            await callback.message.answer("⬅️ Вернуться в меню", reply_markup=menu_kb)
+
             await status_msg.delete()
             await state.clear()
 
@@ -389,6 +402,7 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
             msg = STRINGS[lang]["err_timeout"]
         await status_msg.edit_text(msg, parse_mode="HTML")
         await state.clear()
+
     finally:
         if video_path and os.path.exists(video_path):
             try:
@@ -410,17 +424,23 @@ async def admin_broadcast(callback: types.CallbackQuery, state: FSMContext):
 @video_router.message(AdminStates.waiting_for_broadcast)
 async def perform_broadcast(message: types.Message, state: FSMContext):
     await state.clear()
-    if not os.path.exists(conf.users_db_path):
-        return
-    with open(conf.users_db_path, "r") as f:
-        user_ids = f.read().splitlines()
+
+    total = get_users_count()
+    users = get_users_page(0, total)
+
     count, blocked = 0, 0
     status_msg = await message.answer("🚀 Рассылка...", parse_mode="HTML")
-    for user_id in user_ids:
+
+    for row in users:
+        uid = row["id"]
         try:
-            await message.copy_to(chat_id=user_id)
+            await message.copy_to(chat_id=uid)
             count += 1
             await asyncio.sleep(0.05)
         except:
             blocked += 1
-    await status_msg.edit_text(f"✅ Готово! Успешно: {count}, Блок: {blocked}", parse_mode="HTML")
+
+    await status_msg.edit_text(
+        f"✅ Готово!\nУспешно: {count}\nБлок: {blocked}",
+        parse_mode="HTML"
+    )
