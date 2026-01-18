@@ -147,7 +147,7 @@ class VideoDownloader:
     def _get_opts(self, url, filename_tmpl):
         # Ограничиваем формат до 720p сразу при скачивании
         opts = {
-            'format': format_id or 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best',
+            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
             'outtmpl': filename_tmpl,
             'noplaylist': True,
             'quiet': True,
@@ -163,8 +163,8 @@ class VideoDownloader:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
         return opts
 
-    def _download_sync(self, url: str, temp_path_raw: str, format_id=None):
-        opts = self._get_opts(url, temp_path_raw, format_id)
+    def _download_sync(self, url: str, temp_path_raw: str) -> DownloadedVideo:
+        opts = self._get_opts(url, temp_path_raw)
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -199,23 +199,19 @@ class VideoDownloader:
                 file_size=os.path.getsize(final_path),
             )
 
-async def download(self, url: str, mode: str = 'video', format_id=None) -> DownloadedVideo:
-    url = self._normalize_url(url)
-    unique_id = str(abs(hash(url)))[:8]
-    temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
+    async def download(self, url: str, mode: str = 'video') -> DownloadedVideo:
+        url = self._normalize_url(url)
+        unique_id = str(abs(hash(url)))[:8]
+        temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
 
-    # TikTok — отдельная логика
-    if "tiktok.com" in url:
-        data = await self._download_tiktok_via_api(url, temp_path)
-    else:
-        # YouTube / VK / Instagram
-        data = await asyncio.to_thread(self._download_sync, url, temp_path, format_id)
+        if "tiktok.com" in url:
+            data = await self._download_tiktok_via_api(url, temp_path)
+        else:
+            data = await asyncio.to_thread(self._download_sync, url, temp_path)
 
-    # Обработка аудио
-    if mode == 'audio':
-        audio_path = self._process_audio(data.path)
-        data.path = audio_path
-        data.file_size = os.path.getsize(audio_path)
-
-    return data
-
+        if mode == 'audio':
+            audio_path = self._process_audio(data.path)
+            data.path = audio_path
+            data.file_size = os.path.getsize(audio_path)
+        
+        return data
