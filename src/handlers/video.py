@@ -133,11 +133,6 @@ async def set_language(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
     ])
 
-    if str(callback.from_user.id) == str(conf.admin_id):
-    kb.inline_keyboard.append(
-        [InlineKeyboardButton(text="🛠 Админ‑панель", callback_data="admin_panel")]
-    )
-
     await callback.message.edit_text(
         STRINGS[lang]["welcome"].format(name=callback.from_user.full_name),
         parse_mode="HTML",
@@ -192,76 +187,6 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
         STRINGS[lang]["welcome"].format(name=callback.from_user.full_name),
         reply_markup=kb
     )
-    await callback.answer()
-# --- АДМИН-меню ---
-@video_router.callback_query(F.data == "admin_panel")
-async def admin_panel(callback: types.CallbackQuery, state: FSMContext):
-    if str(callback.from_user.id) != str(conf.admin_id):
-        return
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
-    ])
-
-    await callback.message.edit_text("🛠 Админ‑панель", reply_markup=kb)
-    await callback.answer()
-
-USERS_PER_PAGE = 20
-
-@video_router.callback_query(F.data.startswith("admin_users_page_"))
-async def admin_users(callback: types.CallbackQuery, state: FSMContext):
-    if str(callback.from_user.id) != str(conf.admin_id):
-        return
-
-    page = int(callback.data.split("_")[-1])
-
-    # Загружаем пользователей
-    if not os.path.exists(conf.users_db_path):
-        await callback.message.edit_text("Пользователей пока нет.")
-        return
-
-    with open(conf.users_db_path, "r") as f:
-        users = f.read().splitlines()
-
-    total = len(users)
-    start = page * USERS_PER_PAGE
-    end = start + USERS_PER_PAGE
-    page_users = users[start:end]
-
-    # Формируем список
-    lines = []
-    for uid in page_users:
-        try:
-            member = await callback.bot.get_chat_member(uid, uid)
-            status = "🟢"
-        except:
-            status = "🔴"
-
-        lines.append(f"{status} <code>{uid}</code>")
-
-    text = (
-        f"👥 <b>Пользователи</b>\n"
-        f"Всего: <b>{total}</b>\n"
-        f"Страница: <b>{page + 1}</b>\n\n" +
-        "\n".join(lines)
-    )
-
-    # Кнопки пагинации
-    buttons = []
-
-    if page > 0:
-        buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_users_page_{page - 1}"))
-    if end < total:
-        buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"admin_users_page_{page + 1}"))
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        buttons,
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
-    ])
-
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 # --- ОБРАБОТКА ССЫЛОК ---
@@ -387,14 +312,13 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
                 pass
 
 # --- АДМИНКА ---
-@video_router.callback_query(F.data == "admin_broadcast")
-async def admin_broadcast(callback: types.CallbackQuery, state: FSMContext):
-    if str(callback.from_user.id) != str(conf.admin_id):
-        return
 
-    await callback.message.answer("Пришли сообщение для рассылки.")
+@video_router.message(Command("broadcast"))
+async def start_broadcast(message: types.Message, state: FSMContext):
+    if str(message.from_user.id) != str(conf.admin_id):
+        return
+    await message.answer("Пришли сообщение для рассылки.")
     await state.set_state(AdminStates.waiting_for_broadcast)
-    await callback.answer()
 
 @video_router.message(AdminStates.waiting_for_broadcast)
 async def perform_broadcast(message: types.Message, state: FSMContext):
