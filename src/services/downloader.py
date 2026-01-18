@@ -4,6 +4,7 @@ import yt_dlp
 import subprocess
 import random
 import aiohttp
+import time
 from dataclasses import dataclass
 from src.config import conf
 
@@ -52,12 +53,8 @@ class VideoDownloader:
             try: os.remove(input_path)
             except: pass
         return output_path
+
     def _process_video(self, input_path, duration, is_insta=False):
-        """
-        Обработка видео перед отправкой.
-        Если файл > 50MB, мы больше не сжимаем его до потери качества, 
-        так как теперь у нас есть MTProto (Pyrogram).
-        """
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
@@ -65,25 +62,16 @@ class VideoDownloader:
         output_path = os.path.join(self.download_path, base)
         file_size = os.path.getsize(input_path)
         
-        # Лимиты
-        BOT_API_LIMIT = 48 * 1024 * 1024  # 48 МБ (запас под 50)
-        MTPROTO_LIMIT = 1950 * 1024 * 1024 # 1.95 ГБ (запас под 2ГБ)
+        BOT_API_LIMIT = 48 * 1024 * 1024 
+        MTPROTO_LIMIT = 1950 * 1024 * 1024 
 
-        # 1. Если видео проходит в лимиты MTProto и это не Instagram — делаем копирование (мгновенно)
         if file_size <= MTPROTO_LIMIT and not is_insta:
-            print(f"DEBUG: Прямая перепаковка (High Quality): {input_path}")
             cmd = [
                 "ffmpeg", "-y", "-i", input_path,
-                "-c", "copy",
-                "-map_metadata", "0",
-                "-movflags", "+faststart",
-                output_path
+                "-c", "copy", "-map_metadata", "0",
+                "-movflags", "+faststart", output_path
             ]
         else:
-            # 2. Если это Instagram или видео безумно огромное (> 2ГБ) — сжимаем
-            print(f"DEBUG: Глубокая обработка/сжатие: {input_path}")
-            
-            # Целевой размер для сжатия (если > 2ГБ, жмем до 1.9ГБ)
             target_size = MTPROTO_LIMIT if file_size > MTPROTO_LIMIT else BOT_API_LIMIT
             target_total_bitrate = int((target_size * 8) / max(duration, 1))
             video_bitrate = int(target_total_bitrate * 0.85)
@@ -91,36 +79,16 @@ class VideoDownloader:
             cmd = [
                 "ffmpeg", "-y", "-i", input_path,
                 "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-pix_fmt", "yuv420p",
-                "-r", "30",
-                "-vsync", "cfr",
-                "-profile:v", "main",
-                "-level", "3.1",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart"
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", "-r", "30",
+                "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"
             ]
-
-            # Если всё же нужно жесткое сжатие по битрейту
             if file_size > MTPROTO_LIMIT or is_insta:
-                cmd.extend([
-                    "-b:v", str(video_bitrate),
-                    "-maxrate", str(video_bitrate),
-                    "-bufsize", str(video_bitrate * 2)
-                ])
-
+                cmd.extend(["-b:v", str(video_bitrate), "-maxrate", str(video_bitrate), "-bufsize", str(video_bitrate * 2)])
             cmd.append(output_path)
 
         try:
-            # Запускаем ffmpeg
-            result = subprocess.run(cmd, capture_output=True, timeout=600)
-            if result.returncode != 0:
-                print(f"FFMPEG ERROR: {result.stderr.decode()}")
-                # Если copy не удался (бывает из-за кодеков), пробуем перекодировать
-                if "-c copy" in " ".join(cmd):
-                    return self._process_video_fallback(input_path, output_path)
-                    
+            subprocess.run(cmd, capture_output=True, timeout=600)
         except subprocess.TimeoutExpired:
             raise DownloadError("Обработка видео заняла слишком много времени.")
 
@@ -129,7 +97,86 @@ class VideoDownloader:
             except: pass
 
         return output_path
+
+    def _get_opts(self, url, filename_tmpl, progress_callback=None):
+        def ydl_hook(d):
+            if d['status'] == 'downloading' and progress_callback:
+                p = d.get('_percent_str', '0%').replace('\x1b[0;32m', '').replace('\x1b[0m', '').strip()
+                loop = asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(progress_callback(p), loop)
+
+        opts = {
+            'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+            'outtmpl': filename_tmpl,
+            'noplaylist': True,
+            'quiet': True,
+            'no_warnings': True,
+            'geo_bypass': True,
+            'nocheckcertificate': True,
+            'user_agent': random.choice(self.user_agents),
+            'progress_hooks': [ydl_hook] if progress_callback else [],
+        }
         
+        if "instagram.com" in url:
+            cookies_path = os.path.join(os.getcwd(), "cookies.txt")
+            if os.path.exists(cookies_path): opts['cookiefile'] = cookies_path
+        elif "youtube.com" in url or "youtu.be" in url:
+            opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
+            
+        return opts
+
+    def _download_sync(self, url: str, temp_path_raw: str, progress_callback=None) -> DownloadedVideo:
+        opts = self._get_opts(url, temp_path_raw, progress_callback)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            downloaded_path = ydl.prepare_filename(info)
+
+            # Проверка расширения (yt-dlp может поменять .mp4 на .mkv)
+            if not os.path.exists(downloaded_path):
+                base_no_ext = os.path.splitext(downloaded_path)[0]
+                for ext in [".mp4", ".mkv", ".webm"]:
+                    if os.path.exists(base_no_ext + ext):
+                        downloaded_path = base_no_ext + ext
+                        break
+
+            duration = info.get("duration", 0)
+            extractor = info.get("extractor", "") or ""
+            webpage_url = info.get("webpage_url", "") or ""
+            is_insta = "instagram" in extractor.lower() or "instagram.com" in webpage_url.lower()
+
+            final_path = self._process_video(downloaded_path, duration, is_insta=is_insta)
+
+            return DownloadedVideo(
+                path=final_path,
+                title=info.get("title", "Video"),
+                duration=int(duration or 0),
+                author=info.get("uploader", "Unknown"),
+                width=info.get("width", 0),
+                height=info.get("height", 0),
+                thumb_url=info.get("thumbnail", ""),
+                file_size=os.path.getsize(final_path),
+            )
+
+    async def download(self, url: str, mode: str = 'video', progress_callback=None) -> DownloadedVideo:
+        url = self._normalize_url(url)
+        unique_id = str(abs(hash(url)))[:8]
+        temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
+
+        # Для ТикТока через API проценты реализовать сложнее, оставляем как есть
+        if "tiktok.com" in url:
+            # Здесь можно было бы добавить фейковый прогресс, но пока просто качаем
+            data = await self._download_tiktok_via_api(url, temp_path)
+        else:
+            # Передаем колбэк в синхронный поток
+            data = await asyncio.to_thread(self._download_sync, url, temp_path, progress_callback)
+
+        if mode == 'audio':
+            audio_path = self._process_audio(data.path)
+            data.path = audio_path
+            data.file_size = os.path.getsize(audio_path)
+        
+        return data
+
     async def _download_tiktok_via_api(self, url: str, temp_path: str) -> DownloadedVideo:
         api_url = "https://www.tikwm.com/api/"
         async with aiohttp.ClientSession() as session:
@@ -158,65 +205,6 @@ class VideoDownloader:
                     thumb_url=data.get('cover', ''),
                     file_size=os.path.getsize(final_path),
                 )
-
-    def _get_opts(self, url, filename_tmpl):
-        """Настройки скачивания: теперь разрешаем 1080p"""
-        opts = {
-            # Пробуем взять 1080p, если нет - 720p, если нет - лучшее доступное
-            'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
-            'outtmpl': filename_tmpl,
-            'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
-            'geo_bypass': True,
-            'nocheckcertificate': True,
-            'user_agent': random.choice(self.user_agents),
-        }
-        
-        if "instagram.com" in url:
-            cookies_path = os.path.join(os.getcwd(), "cookies.txt")
-            if os.path.exists(cookies_path): 
-                opts['cookiefile'] = cookies_path
-        elif "youtube.com" in url or "youtu.be" in url:
-            opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
-            
-        return opts
-
-    def _download_sync(self, url: str, temp_path_raw: str) -> DownloadedVideo:
-        opts = self._get_opts(url, temp_path_raw)
-
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            downloaded_path = ydl.prepare_filename(info)
-
-            if not os.path.exists(downloaded_path):
-                base_no_ext = os.path.splitext(downloaded_path)[0]
-                for ext in [".mp4", ".mkv", ".webm"]:
-                    if os.path.exists(base_no_ext + ext):
-                        downloaded_path = base_no_ext + ext
-                        break
-
-            duration = info.get("duration", 0)
-
-            # Определяем Instagram по extractor и URL
-            extractor = info.get("extractor", "") or ""
-            webpage_url = info.get("webpage_url", "") or ""
-            is_insta = "instagram" in extractor.lower() or "instagram.com" in webpage_url.lower()
-
-            print(f"DEBUG: extractor={extractor}, is_insta={is_insta}")
-
-            final_path = self._process_video(downloaded_path, duration, is_insta=is_insta)
-
-            return DownloadedVideo(
-                path=final_path,
-                title=info.get("title", "Video"),
-                duration=int(duration or 0),
-                author=info.get("uploader", "Unknown"),
-                width=info.get("width", 0),
-                height=info.get("height", 0),
-                thumb_url=info.get("thumbnail", ""),
-                file_size=os.path.getsize(final_path),
-            )
 
     async def download(self, url: str, mode: str = 'video') -> DownloadedVideo:
         url = self._normalize_url(url)
