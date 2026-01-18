@@ -1,9 +1,11 @@
 from aiogram import Bot, Dispatcher
 from src.config import conf
+from src.db import init_db
 from src.handlers.common import common_router
 from src.handlers.video import video_router
 
 async def start_bot():
+    init_db()
     # Инициализация бота
     bot = Bot(token=conf.bot_token)
     
