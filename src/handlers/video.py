@@ -86,19 +86,6 @@ class AdminStates(StatesGroup):
     waiting_for_broadcast = State()
 
 # --- СЛУЖЕБНЫЕ ФУНКЦИИ ---
-
-def register_user(user_id: int):
-    user_id_str = str(user_id)
-    if not os.path.exists(conf.users_db_path):
-        os.makedirs(os.path.dirname(conf.users_db_path), exist_ok=True)
-        with open(conf.users_db_path, "w") as f:
-            pass
-    with open(conf.users_db_path, "r") as f:
-        users = f.read().splitlines()
-    if user_id_str not in users:
-        with open(conf.users_db_path, "a") as f:
-            f.write(user_id_str + "\n")
-
 async def is_subscribed(bot, user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
@@ -119,9 +106,6 @@ async def start_cmd(message: types.Message, state: FSMContext):
         full_name=message.from_user.full_name,
         lang="ru"
     )
-
-    # Параллельно продолжаем вести TXT-базу для старой админки
-    register_user(message.from_user.id)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -230,46 +214,44 @@ async def admin_panel(callback: types.CallbackQuery, state: FSMContext):
 
 USERS_PER_PAGE = 20
 
+from src.db import get_users, count_users
+
+USERS_PER_PAGE = 20
+
 @video_router.callback_query(F.data.startswith("admin_users_page_"))
 async def admin_users(callback: types.CallbackQuery, state: FSMContext):
     if str(callback.from_user.id) != str(conf.admin_id):
         return
 
     page = int(callback.data.split("_")[-1])
+    total = count_users()
 
-    if not os.path.exists(conf.users_db_path):
+    offset = page * USERS_PER_PAGE
+    users = get_users(offset=offset, limit=USERS_PER_PAGE)
+
+    if not users:
         await callback.message.edit_text("Пользователей пока нет.", parse_mode="HTML")
         await callback.answer()
         return
 
-    with open(conf.users_db_path, "r") as f:
-        users = f.read().splitlines()
-
-    total = len(users)
-    start = page * USERS_PER_PAGE
-    end = start + USERS_PER_PAGE
-    page_users = users[start:end]
-
     lines = []
-    for uid in page_users:
-        try:
-            await callback.bot.get_chat_member(chat_id=uid, user_id=uid)
-            status = "🟢"
-        except:
-            status = "🔴"
-        lines.append(f"{status} <code>{uid}</code>")
+    for uid, username, full_name, lang, downloads, last_active in users:
+        status = "🟢"
+        lines.append(
+            f"{status} <code>{uid}</code> — {username or '—'} — {lang.upper()} — DL: {downloads}"
+        )
 
     text = (
         f"👥 <b>Пользователи</b>\n"
         f"Всего: <b>{total}</b>\n"
         f"Страница: <b>{page + 1}</b>\n\n" +
-        ("\n".join(lines) if lines else "Нет пользователей на этой странице.")
+        "\n".join(lines)
     )
 
     buttons = []
     if page > 0:
         buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"admin_users_page_{page - 1}"))
-    if end < total:
+    if offset + USERS_PER_PAGE < total:
         buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"admin_users_page_{page + 1}"))
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -284,8 +266,7 @@ async def admin_users(callback: types.CallbackQuery, state: FSMContext):
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
 async def process_video_url(message: types.Message, state: FSMContext):
-    # Ведём и TXT, и SQLite — чтобы ничего не сломать
-    register_user(message.from_user.id)
+    # SQLite
     add_user(
         user_id=message.from_user.id,
         username=message.from_user.username,
@@ -431,8 +412,8 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
     await state.clear()
     if not os.path.exists(conf.users_db_path):
         return
-    with open(conf.users_db_path, "r") as f:
-        user_ids = f.read().splitlines()
+    from src.db import get_all_user_ids
+    user_ids = get_all_user_ids()
     count, blocked = 0, 0
     status_msg = await message.answer("🚀 Рассылка...", parse_mode="HTML")
     for user_id in user_ids:
