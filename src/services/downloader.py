@@ -163,7 +163,7 @@ class VideoDownloader:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
         return opts
 
-    def _download_sync(self, url: str, temp_path_raw: str) -> DownloadedVideo:
+    def _download_sync(self, url: str, temp_path_raw: str, format_id=None):
         opts = self._get_opts(url, temp_path_raw, format_id)
 
         with yt_dlp.YoutubeDL(opts) as ydl:
