@@ -43,7 +43,7 @@ STRINGS = {
         "step_2": "📥 [2/4] Загружаю файл на сервер...",
         "step_3": "⚙️ [3/4] Обрабатываю и сжимаю...",
         "step_4": "📤 [4/4] Отправляю файл тебе...",
-        "promo": "\n\n🚀 <b>Скачано через: @bot</b>",
+        "promo": "\n\n🚀 <b>Скачано через: @youtodownloadbot</b>",
         "err_heavy": "❌ Видео слишком тяжелое для Telegram (даже после сжатия).",
         "err_timeout": "❌ Видео обрабатывалось слишком долго. Попробуй другое."
     },
@@ -71,7 +71,7 @@ STRINGS = {
         "step_2": "📥 [2/4] Downloading to server...",
         "step_3": "⚙️ [3/4] Processing and compressing...",
         "step_4": "📤 [4/4] Sending file to you...",
-        "promo": "\n\n🚀 <b>Via: @bot</b>",
+        "promo": "\n\n🚀 <b>Via: @youtodownloadbot</b>",
         "err_heavy": "❌ Video is too heavy for Telegram.",
         "err_timeout": "❌ Processing timeout. Try another video."
     }
