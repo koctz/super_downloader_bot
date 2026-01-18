@@ -1,96 +1,62 @@
 import sqlite3
-from pathlib import Path
-from datetime import datetime
+import threading
 
-DB_PATH = Path("data/bot.db")  # можешь поменять путь, если нужно
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DB_PATH = "data/users.db"
 
-
-def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
+_lock = threading.Lock()
 
 def init_db():
-    conn = get_connection()
-    cur = conn.cursor()
+    with _lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY,
-            username TEXT,
-            full_name TEXT,
-            lang TEXT,
-            registered_at TEXT,
-            last_active TEXT,
-            downloads INTEGER DEFAULT 0,
-            blocked INTEGER DEFAULT 0
-        )
-        """
-    )
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                username TEXT,
+                full_name TEXT,
+                lang TEXT,
+                downloads INTEGER DEFAULT 0,
+                last_active INTEGER DEFAULT 0
+            )
+        """)
 
-    conn.commit()
-    conn.close()
-    def add_or_update_user(user_id: int, username: str | None, full_name: str | None, lang: str | None = "ru"):
-    now = datetime.utcnow().isoformat()
-    conn = get_connection()
-    cur = conn.cursor()
+        conn.commit()
+        conn.close()
 
-    cur.execute(
-        """
-        INSERT INTO users (id, username, full_name, lang, registered_at, last_active)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            username=excluded.username,
-            full_name=excluded.full_name,
-            lang=COALESCE(excluded.lang, lang),
-            last_active=excluded.last_active
-        """,
-        (user_id, username, full_name, lang, now, now),
-    )
+def add_user(user_id, username, full_name, lang):
+    with _lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
 
-    conn.commit()
-    conn.close()
+        cursor.execute("""
+            INSERT OR IGNORE INTO users (id, username, full_name, lang)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, username, full_name, lang))
 
+        conn.commit()
+        conn.close()
 
-def update_last_active(user_id: int):
-    now = datetime.utcnow().isoformat()
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET last_active=? WHERE id=?", (now, user_id))
-    conn.commit()
-    conn.close()
+def update_last_active(user_id, timestamp):
+    with _lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
 
+        cursor.execute("""
+            UPDATE users SET last_active = ? WHERE id = ?
+        """, (timestamp, user_id))
 
-def increment_downloads(user_id: int):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET downloads = downloads + 1 WHERE id=?", (user_id,))
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
 
+def increment_downloads(user_id):
+    with _lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
 
-def get_users_page(page: int, per_page: int = 20):
-    offset = page * per_page
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, username, full_name, lang, registered_at, last_active, downloads, blocked FROM users "
-        "ORDER BY registered_at DESC LIMIT ? OFFSET ?",
-        (per_page, offset),
-    )
-    rows = cur.fetchall()
-    conn.close()
-    return rows
+        cursor.execute("""
+            UPDATE users SET downloads = downloads + 1 WHERE id = ?
+        """, (user_id,))
 
-
-def get_users_count():
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) AS c FROM users")
-    row = cur.fetchone()
-    conn.close()
-    return row["c"] if row else 0
-
+        conn.commit()
+        conn.close()
