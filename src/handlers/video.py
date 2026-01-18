@@ -398,6 +398,8 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
 
 # --- АДМИНКА: РАССЫЛКА ---
 
+from src.db import get_all_user_ids
+
 @video_router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast(callback: types.CallbackQuery, state: FSMContext):
     if str(callback.from_user.id) != str(conf.admin_id):
@@ -407,20 +409,33 @@ async def admin_broadcast(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_broadcast)
     await callback.answer()
 
+
 @video_router.message(AdminStates.waiting_for_broadcast)
 async def perform_broadcast(message: types.Message, state: FSMContext):
     await state.clear()
-    if not os.path.exists(conf.users_db_path):
-        return
-    from src.db import get_all_user_ids
+
     user_ids = get_all_user_ids()
+
+    if not user_ids:
+        await message.answer("❌ Нет пользователей в базе.", parse_mode="HTML")
+        return
+
     count, blocked = 0, 0
-    status_msg = await message.answer("🚀 Рассылка...", parse_mode="HTML")
+    status_msg = await message.answer("🚀 Рассылка запущена...", parse_mode="HTML")
+
     for user_id in user_ids:
         try:
-            await message.copy_to(chat_id=user_id)
+            await message.copy_to(chat_id=int(user_id))
             count += 1
             await asyncio.sleep(0.05)
-        except:
+        except Exception:
             blocked += 1
-    await status_msg.edit_text(f"✅ Готово! Успешно: {count}, Блок: {blocked}", parse_mode="HTML")
+            continue
+
+    await status_msg.edit_text(
+        f"✅ Готово!\n\n"
+        f"Отправлено: <b>{count}</b>\n"
+        f"Недоступно: <b>{blocked}</b>",
+        parse_mode="HTML"
+    )
+
