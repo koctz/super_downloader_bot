@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import re
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -147,19 +148,6 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(STRINGS[lang]["welcome"].format(name=callback.from_user.full_name), parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
-# --- АДМИН-ПАНЕЛЬ ---
-
-@video_router.callback_query(F.data == "admin_panel")
-async def admin_panel(callback: types.CallbackQuery, state: FSMContext):
-    if str(callback.from_user.id) != str(conf.admin_id): return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users_page_0")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
-    ])
-    await callback.message.edit_text("🛠 <b>Админ-панель</b>", parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
-
 # --- ОБРАБОТКА ССЫЛОК ---
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
@@ -179,12 +167,19 @@ async def process_video_url(message: types.Message, state: FSMContext):
     url = message.text.strip()
     await state.update_data(download_url=url)
     
-    wait_msg = await message.answer("⏳ Анализирую видео...")
-    yt_info = await downloader.get_formats(url)
-    await wait_msg.delete()
+    # Проверяем, является ли это обычным YouTube видео (не Shorts)
+    is_youtube = any(domain in url for domain in ["youtube.com", "youtu.be"])
+    is_shorts = "shorts" in url
+
+    # Пытаемся получить форматы только для обычного YouTube
+    yt_info = None
+    if is_youtube and not is_shorts:
+        wait_msg = await message.answer("⏳ Анализирую видео...")
+        yt_info = await downloader.get_formats(url)
+        await wait_msg.delete()
 
     if yt_info and yt_info.get("formats"):
-        # Обычный YouTube с кнопками качества
+        # Обычный YouTube с кнопками качества и превью
         caption = (f"🎬 <b>{yt_info['title']}</b>\n\n"
                    f"👤 Канал: <a href='{yt_info['uploader_url']}'>{yt_info['uploader']}</a>\n"
                    f"⚙️ Выберите качество видео или аудио:")
@@ -201,10 +196,14 @@ async def process_video_url(message: types.Message, state: FSMContext):
         kb_list.append([InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")])
         kb_list.append([InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")])
         
-        await message.answer_photo(photo=yt_info['thumbnail'], caption=caption, 
-                                   parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
+        await message.answer_photo(
+            photo=yt_info['thumbnail'], 
+            caption=caption, 
+            parse_mode="HTML", 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list)
+        )
     else:
-        # Для Shorts, TikTok, VK, Insta (без выбора качества)
+        # Для Shorts, TikTok, VK, Insta (как и было)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=STRINGS[lang]["btn_video"], callback_data="dl_video"),
              InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")],
@@ -236,14 +235,13 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer(STRINGS[lang]["err_lost"], show_alert=True)
         return
 
-    # Логика определения режима и качества
-    # dl_video_720 -> mode='video', quality='720'
-    # dl_video -> mode='video', quality=None
+    # Парсим mode и quality
+    # dl_video_720 -> parts=["dl", "video", "720"]
+    # dl_video -> parts=["dl", "video"]
     parts = callback.data.split("_")
     mode = parts[1]
     quality = parts[2] if len(parts) > 2 else None
 
-    # Если сообщение с фото (от YouTube), меняем его на текст статуса
     if callback.message.photo:
         status_msg = await callback.message.answer(STRINGS[lang]["step_1"], parse_mode="HTML")
         await callback.message.delete()
@@ -269,7 +267,7 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         except: pass
 
     try:
-        # ПЕРЕДАЕМ QUALITY В DOWNLOADER
+        # Передаем и mode (video/audio) и quality (None или число)
         video_data = await downloader.download(url, mode=mode, progress_callback=download_progress, quality=quality)
         video_path = video_data.path
         await status_msg.edit_text(STRINGS[lang]["step_3"], parse_mode="HTML")
