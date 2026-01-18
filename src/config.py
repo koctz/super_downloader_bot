@@ -13,7 +13,6 @@ class Config:
     channel_id: str   # Добавили ID канала
     channel_url: str  # Добавили ссылку на канал
     admin_id: str  # Добавь это поле
-    users_db_path: str # Добавь путь к файлу пользователей
 
 # Проверка токена
 token = os.getenv("BOT_TOKEN")
@@ -31,7 +30,6 @@ conf = Config(
     channel_id=channel_id,
     channel_url=channel_url,
     admin_id=os.getenv("ADMIN_ID"),
-    users_db_path=os.path.join(os.getcwd(), "data", "users.txt") # Путь к файлу
 )
 
 # Автосоздание папки data
