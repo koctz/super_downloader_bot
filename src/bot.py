@@ -7,7 +7,7 @@ from src.handlers.video import video_router
 async def start_bot():
     init_db()
     # Инициализация бота
-    bot = Bot(token=conf.bot_token)
+    bot = Bot(token=conf.bot_token, parse_mode="HTML")
     
     # Инициализация диспетчера
     dp = Dispatcher()
