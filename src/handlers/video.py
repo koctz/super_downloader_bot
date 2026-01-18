@@ -357,19 +357,11 @@ async def youtube_audio(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: URL потерян", show_alert=True)
         return
 
-    ydl_opts = {
-        "format": format_id,
-        "outtmpl": "downloads/%(title)s.%(ext)s"
-    }
+    audio = await downloader.download(url, mode="audio", format_id=format_id)
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url)
-        file_path = ydl.prepare_filename(info)
-
-    # Отправляем как документ — работает всегда
-    await callback.message.answer_document(
-        document=open(file_path, "rb"),
-        caption=f"🎵 {info.get('title')}"
+    await callback.message.answer_audio(
+        audio=FSInputFile(audio.path),
+        caption=f"🎵 {audio.title}"
     )
 
     await callback.answer()
