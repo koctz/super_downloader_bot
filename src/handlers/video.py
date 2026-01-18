@@ -353,56 +353,53 @@ async def handle_download(callback: types.CallbackQuery, state: FSMContext):
         return
 
     mode = callback.data.split("_")[1]
-    status_msg = await callback.message.edit_text(STRINGS[lang]["step_1"], parse_mode="HTML")
-
-    video_path = None
-    try:
-        action = ChatActionSender.upload_video if mode == 'video' else ChatActionSender.upload_document
-        async with action(chat_id=callback.message.chat.id, bot=callback.bot):
-            await status_msg.edit_text(STRINGS[lang]["step_2"], parse_mode="HTML")
+    await status_msg.edit_text(STRINGS[lang]["step_4"], parse_mode="HTML")
             
-            # Скачиваем файл через downloader
-            video_data = await downloader.download(url, mode=mode)
-            video_path = video_data.path
-            
-            # Проверяем размер файла в МБ
-            file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
-            print(f"DEBUG: File size: {file_size_mb:.2f} MB")
+            # Настройка прогресс-бара для всех видео
+            last_edit_time = 0
+            async def progress_bar(current, total):
+                nonlocal last_edit_time
+                if time.time() - last_edit_time < 4: # Обновляем раз в 4 сек, чтобы не спамить
+                    return
+                percent = current * 100 / total
+                try:
+                    await status_msg.edit_text(
+                        f"📤 <b>[4/4]</b> Отправка: <b>{percent:.1f}%</b>",
+                        parse_mode="HTML"
+                    )
+                    last_edit_time = time.time()
+                except: pass
 
-            await status_msg.edit_text(STRINGS[lang]["step_3"], parse_mode="HTML")
-            await status_msg.edit_text(STRINGS[lang]["step_4"], parse_mode="HTML")
+            # Проверяем соединение
+            if not tele_client.is_connected():
+                await tele_client.start(bot_token=conf.bot_token)
 
-            clean_title = video_data.title[:900]
-            caption = f"🎬 <b>{clean_title}</b>{STRINGS[lang]['promo']}"
-
-            # --- ВЫБОР СПОСОБА ОТПРАВКИ ---
-            if file_size_mb > 50:
-                if not tele_client.is_connected():
-                    await tele_client.start(bot_token=conf.bot_token)
+            if mode == 'video':
+                # Атрибуты видео (нужны для превью и стриминга)
+                attributes = [DocumentAttributeVideo(
+                    duration=int(video_data.duration or 0),
+                    w=video_data.width or 0,
+                    h=video_data.height or 0,
+                    supports_streaming=True
+                )]
                 
-                if mode == 'video':
-                    # Добавляем атрибуты, чтобы Telegram понял, что это видео
-                    attributes = [DocumentAttributeVideo(
-                        duration=int(video_data.duration or 0),
-                        w=video_data.width or 0,
-                        h=video_data.height or 0,
-                        supports_streaming=True
-                    )]
-                    
-                    await tele_client.send_file(
-                        callback.message.chat.id,
-                        video_path,
-                        caption=caption,
-                        attributes=attributes,
-                        parse_mode='html'
-                    )
-                else:
-                    await tele_client.send_file(
-                        callback.message.chat.id,
-                        video_path,
-                        caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
-                        parse_mode='html'
-                    )
+                await tele_client.send_file(
+                    callback.message.chat.id,
+                    video_path,
+                    caption=caption,
+                    attributes=attributes,
+                    parse_mode='html',
+                    progress_callback=progress_bar if file_size_mb > 10 else None # Прогресс только для файлов > 10МБ
+                )
+            else:
+                # Отправка аудио
+                await tele_client.send_file(
+                    callback.message.chat.id,
+                    video_path,
+                    caption=f"🎵 <b>{clean_title}</b>{STRINGS[lang]['promo']}",
+                    parse_mode='html',
+                    progress_callback=progress_bar if file_size_mb > 10 else None
+                )
             from src.db import increment_downloads
             increment_downloads(callback.from_user.id)
 
