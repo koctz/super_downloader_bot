@@ -6,7 +6,8 @@ from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from telethon import TelegramClient
+from telethon import TelegramClient, events
+from telethon.tl.types import DocumentAttributeVideo
 
 from src.services.downloader import VideoDownloader
 from src.db import add_user
@@ -20,7 +21,7 @@ downloader = VideoDownloader()
 
 # Инициализируем Telethon (в режиме бота)
 # 'bot_session' — имя файла сессии
-tele_client = TelegramClient('bot_session', conf.api_id, conf.api_hash)
+tele_client = TelegramClient('telethon_bot', conf.api_id, conf.api_hash)
 
 # --- ЛОКАЛИЗАЦИЯ ---
 STRINGS = {
