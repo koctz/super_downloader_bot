@@ -99,11 +99,16 @@ class VideoDownloader:
         return output_path
 
     def _get_opts(self, url, filename_tmpl, progress_callback=None):
-        def ydl_hook(d):
-            if d['status'] == 'downloading' and progress_callback:
-                p = d.get('_percent_str', '0%').replace('\x1b[0;32m', '').replace('\x1b[0m', '').strip()
-                loop = asyncio.get_event_loop()
-                asyncio.run_coroutine_threadsafe(progress_callback(p), loop)
+    def ydl_hook(d):
+            if d['status'] == 'downloading' and progress_callback and loop:
+                p = d.get('_percent_str', '0%')
+                
+                # Очистка от ANSI-кодов (цветов консоли)
+                clean_p = re.sub(r'\x1b\[[0-9;]*m', '', p).strip()
+                
+                loop.call_soon_threadsafe(
+                    lambda: asyncio.create_task(progress_callback(clean_p))
+                )
 
         opts = {
             'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
