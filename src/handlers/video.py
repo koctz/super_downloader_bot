@@ -140,7 +140,7 @@ async def back_main(callback: types.CallbackQuery, state: FSMContext):
         kb_rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_panel")])
     await callback.message.edit_text(STRINGS[lang]["welcome"].format(name=callback.from_user.full_name), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
 
-# --- АДМИН ПАНЕЛЬ (ВОЗВРАЩЕНА) ---
+# --- АДМИН ПАНЕЛЬ ---
 
 @video_router.callback_query(F.data == "admin_panel")
 async def admin_main(callback: types.CallbackQuery):
@@ -240,7 +240,6 @@ async def start_dl(callback: types.CallbackQuery, state: FSMContext):
     mode = 'audio' if parts[1] == 'audio' else 'video'
     quality = parts[2] if len(parts) > 2 else None
 
-    # Если это было фото-превью, удаляем его
     try: await callback.message.delete()
     except: pass
     
@@ -263,15 +262,27 @@ async def start_dl(callback: types.CallbackQuery, state: FSMContext):
         cap = f"🎬 <b>{res.title}</b>{STRINGS[lang]['promo']}"
         if mode == 'audio': cap = f"🎵 <b>{res.title}</b>{STRINGS[lang]['promo']}"
 
+        # ПРАВКА: Добавлен параметр supports_streaming для быстрой отправки и просмотра
         await tele_client.send_file(
-            callback.message.chat.id, res.path, caption=cap, parse_mode='html',
-            attributes=[DocumentAttributeVideo(duration=res.duration, w=res.width, h=res.height, supports_streaming=True)] if mode == 'video' else []
+            callback.message.chat.id, 
+            res.path, 
+            caption=cap, 
+            parse_mode='html',
+            supports_streaming=True, # Обязательно для быстрой отправки
+            attributes=[DocumentAttributeVideo(
+                duration=res.duration, 
+                w=res.width, 
+                h=res.height, 
+                supports_streaming=True
+            )] if mode == 'video' else []
         )
         await status.delete()
     except Exception as e:
         await status.edit_text(f"❌ Error: {str(e)[:100]}")
     finally:
-        if 'res' in locals() and os.path.exists(res.path): os.remove(res.path)
+        if 'res' in locals() and os.path.exists(res.path): 
+            try: os.remove(res.path)
+            except: pass
 
 @video_router.callback_query(F.data == "cancel_download")
 async def cancel_dl(callback: types.CallbackQuery):
