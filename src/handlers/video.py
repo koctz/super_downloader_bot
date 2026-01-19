@@ -8,7 +8,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 from telethon import TelegramClient
 from telethon.tl.types import DocumentAttributeVideo
-from telethon.client.uploads import MAX_CHUNK_SIZE
 
 from src.services.downloader import VideoDownloader
 from src.db import add_user, count_users, get_all_user_ids
@@ -60,9 +59,6 @@ async def send_media_smart(callback: types.CallbackQuery, res, lang: str, mode: 
             return
         except Exception as e:
             print("Aiogram send failed → fallback:", e)
-
-    # 2) Fallback → Telethon
-    MAX_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
     if not tele_client.is_connected():
         await tele_client.start(bot_token=conf.bot_token)
