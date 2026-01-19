@@ -289,6 +289,13 @@ async def cancel_dl(callback: types.CallbackQuery, state: FSMContext):
     u_data = await state.get_data()
     lang = u_data.get("lang", "ru")
 
+    # 1. Удаляем сообщение (оно может быть фото/видео)
+    try:
+        await callback.message.delete()
+    except:
+        pass
+
+    # 2. Формируем главное меню
     kb_rows = [
         [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
         [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
@@ -297,7 +304,8 @@ async def cancel_dl(callback: types.CallbackQuery, state: FSMContext):
     if str(callback.from_user.id) == str(conf.admin_id):
         kb_rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_panel")])
 
-    await callback.message.edit_text(
+    # 3. Отправляем новое сообщение
+    await callback.message.answer(
         STRINGS[lang]["welcome"].format(name=callback.from_user.full_name),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
