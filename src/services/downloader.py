@@ -5,6 +5,7 @@ import subprocess
 import random
 import aiohttp
 import re
+import time  # <--- ДОБАВЛЕН ЭТОТ ИМПОРТ
 from dataclasses import dataclass
 from src.config import conf
 
@@ -60,6 +61,11 @@ class VideoDownloader:
             base = os.path.splitext(base)[0] + ".mp4"
             
         output_path = os.path.join(self.download_path, base)
+        
+        # Если исходного файла нет (ошибка скачивания), возвращаем как есть, ошибка вылетит позже
+        if not os.path.exists(input_path):
+            return input_path
+
         file_size = os.path.getsize(input_path)
         
         MTPROTO_LIMIT = 1980 * 1024 * 1024 
@@ -93,6 +99,7 @@ class VideoDownloader:
         # Логика выбора формата
         if quality:
             # Пытаемся взять точное разрешение, если нет - ближайшее лучшее
+            # [height<=?{quality}] означает "высота не больше заданной"
             fmt = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best'
         else:
             # Максимальное качество (ограничено 1080 для ТГ, чтобы не качать 4K по умолчанию)
@@ -119,6 +126,7 @@ class VideoDownloader:
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
+        # Вот здесь используется time, который вызывал ошибку
         unique_id = str(abs(hash(url + str(time.time()))))[:8]
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
         loop = asyncio.get_running_loop()
@@ -160,7 +168,7 @@ class VideoDownloader:
                 
             downloaded_path = ydl.prepare_filename(info)
             
-            # yt-dlp может добавить расширение
+            # yt-dlp может добавить расширение, проверяем
             if not os.path.exists(downloaded_path):
                 base_no_ext = os.path.splitext(downloaded_path)[0]
                 for ext in [".mp4", ".mkv", ".webm"]:
@@ -201,7 +209,6 @@ class VideoDownloader:
                         f.write(await video_res.read())
                         
                 duration = data.get('duration', 0)
-                # Тиктоки обычно не требуют жесткого перекодирования, если они mp4
                 return DownloadedVideo(
                     path=temp_path, 
                     title=data.get('title', 'TikTok Video'),
