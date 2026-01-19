@@ -43,7 +43,6 @@ class VideoDownloader:
             url = f"https://www.youtube.com/watch?v={video_id}"
         return url
 
-    # --- НОВЫЙ МЕТОД ДЛЯ ПРЕВЬЮ ---
     async def get_video_info(self, url: str):
         url = self._normalize_url(url)
         loop = asyncio.get_running_loop()
@@ -51,7 +50,7 @@ class VideoDownloader:
 
     def _get_info_sync(self, url: str):
         opts = {
-            'extract_flat': True, # Быстрый режим, не качает видео
+            'extract_flat': True,
             'quiet': True,
             'no_warnings': True,
             'user_agent': random.choice(self.user_agents),
@@ -60,7 +59,6 @@ class VideoDownloader:
         with yt_dlp.YoutubeDL(opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=False)
-                # Иногда yt-dlp возвращает thumbnail в списке, иногда строкой
                 thumb = info.get('thumbnail')
                 if not thumb and info.get('thumbnails'):
                     thumb = info['thumbnails'][-1].get('url')
@@ -72,7 +70,6 @@ class VideoDownloader:
                 }
             except:
                 return None
-    # -------------------------------
 
     def _process_audio(self, input_path):
         base = os.path.basename(input_path)
@@ -90,18 +87,20 @@ class VideoDownloader:
             base = os.path.splitext(base)[0] + ".mp4"
             
         output_path = os.path.join(self.download_path, base)
-        
         if not os.path.exists(input_path):
             return input_path
 
         file_size = os.path.getsize(input_path)
         MTPROTO_LIMIT = 1980 * 1024 * 1024 
         
+        # ПРАВКА: Если файл MP4 и под лимитом - просто копируем (быстро и без потери качества)
         if file_size <= MTPROTO_LIMIT and not is_insta and input_path.endswith(".mp4"):
             cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-map_metadata", "0", "-movflags", "+faststart", output_path]
         else:
-            cmd = ["ffmpeg", "-y", "-i", input_path, "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", 
-                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", 
+            # ПРАВКА: Если конвертируем, убираем принудительный scale=720, чтобы сохранить исходное разрешение
+            # Мы используем crf 23 для баланса веса и качества
+            cmd = ["ffmpeg", "-y", "-i", input_path, 
+                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", 
                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_path]
 
         try:
@@ -120,7 +119,8 @@ class VideoDownloader:
 
     def _get_opts(self, url, filename_tmpl, quality=None):
         if quality:
-            fmt = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best'
+            # ПРАВКА: Более точный выбор формата для YouTube
+            fmt = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}]/best'
         else:
             fmt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
 
