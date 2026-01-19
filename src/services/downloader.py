@@ -5,7 +5,7 @@ import subprocess
 import random
 import aiohttp
 import re
-import time  # <--- ДОБАВЛЕН ЭТОТ ИМПОРТ
+import time
 from dataclasses import dataclass
 from src.config import conf
 
@@ -43,10 +43,40 @@ class VideoDownloader:
             url = f"https://www.youtube.com/watch?v={video_id}"
         return url
 
+    # --- НОВЫЙ МЕТОД ДЛЯ ПРЕВЬЮ ---
+    async def get_video_info(self, url: str):
+        url = self._normalize_url(url)
+        loop = asyncio.get_running_loop()
+        return await asyncio.to_thread(self._get_info_sync, url)
+
+    def _get_info_sync(self, url: str):
+        opts = {
+            'extract_flat': True, # Быстрый режим, не качает видео
+            'quiet': True,
+            'no_warnings': True,
+            'user_agent': random.choice(self.user_agents),
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=False)
+                # Иногда yt-dlp возвращает thumbnail в списке, иногда строкой
+                thumb = info.get('thumbnail')
+                if not thumb and info.get('thumbnails'):
+                    thumb = info['thumbnails'][-1].get('url')
+                
+                return {
+                    'title': info.get('title', 'Video'),
+                    'thumbnail': thumb,
+                    'duration': info.get('duration')
+                }
+            except:
+                return None
+    # -------------------------------
+
     def _process_audio(self, input_path):
         base = os.path.basename(input_path)
         output_path = os.path.join(self.download_path, os.path.splitext(base)[0] + ".mp3")
-        # Используем lame для надежности
         cmd = ["ffmpeg", "-y", "-i", input_path, "-vn", "-acodec", "libmp3lame", "-q:a", "2", output_path]
         subprocess.run(cmd, capture_output=True)
         if os.path.exists(input_path):
@@ -55,26 +85,21 @@ class VideoDownloader:
         return output_path
 
     def _process_video(self, input_path, duration, is_insta=False):
-        # Если файл не mp4, конвертируем
         base = os.path.basename(input_path).replace("raw_", "final_")
         if not base.endswith(".mp4"):
             base = os.path.splitext(base)[0] + ".mp4"
             
         output_path = os.path.join(self.download_path, base)
         
-        # Если исходного файла нет (ошибка скачивания), возвращаем как есть, ошибка вылетит позже
         if not os.path.exists(input_path):
             return input_path
 
         file_size = os.path.getsize(input_path)
-        
         MTPROTO_LIMIT = 1980 * 1024 * 1024 
         
-        # Если файл подходит и не Инстаграм (инсту лучше пережать, часто кодеки кривые для ТГ)
         if file_size <= MTPROTO_LIMIT and not is_insta and input_path.endswith(".mp4"):
             cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-map_metadata", "0", "-movflags", "+faststart", output_path]
         else:
-            # Сжатие и конвертация
             cmd = ["ffmpeg", "-y", "-i", input_path, "-vf", "scale='trunc(oh*a/2)*2:720',setsar=1", 
                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", 
                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_path]
@@ -83,7 +108,6 @@ class VideoDownloader:
             subprocess.run(cmd, capture_output=True, timeout=900)
         except Exception as e:
             print(f"FFmpeg Error: {e}")
-            # Если конвертация упала, возвращаем исходник (если он mp4)
             if input_path.endswith(".mp4"):
                 return input_path
             
@@ -92,17 +116,12 @@ class VideoDownloader:
                 try: os.remove(input_path)
                 except: pass
             return output_path
-        
-        return input_path # Fallback
+        return input_path
 
     def _get_opts(self, url, filename_tmpl, quality=None):
-        # Логика выбора формата
         if quality:
-            # Пытаемся взять точное разрешение, если нет - ближайшее лучшее
-            # [height<=?{quality}] означает "высота не больше заданной"
             fmt = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best'
         else:
-            # Максимальное качество (ограничено 1080 для ТГ, чтобы не качать 4K по умолчанию)
             fmt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
 
         opts = {
@@ -126,17 +145,15 @@ class VideoDownloader:
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
-        # Вот здесь используется time, который вызывал ошибку
         unique_id = str(abs(hash(url + str(time.time()))))[:8]
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
         loop = asyncio.get_running_loop()
 
-        if "tiktok.com" in url and mode != 'audio': # Аудио с тиктока лучше через yt-dlp
+        if "tiktok.com" in url and mode != 'audio':
             try:
                 data = await self._download_tiktok_via_api(url, temp_path)
                 return data
             except:
-                # Fallback to yt-dlp if api fails
                 pass
 
         data = await asyncio.to_thread(self._download_sync, url, temp_path, quality, progress_callback, loop)
@@ -168,7 +185,6 @@ class VideoDownloader:
                 
             downloaded_path = ydl.prepare_filename(info)
             
-            # yt-dlp может добавить расширение, проверяем
             if not os.path.exists(downloaded_path):
                 base_no_ext = os.path.splitext(downloaded_path)[0]
                 for ext in [".mp4", ".mkv", ".webm"]:
@@ -179,7 +195,6 @@ class VideoDownloader:
             duration = info.get("duration", 0)
             is_insta = "instagram" in (info.get("extractor", "") or "").lower()
             
-            # Обработка видео (ffmpeg)
             final_path = self._process_video(downloaded_path, duration, is_insta=is_insta)
 
             return DownloadedVideo(
