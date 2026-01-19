@@ -10,16 +10,15 @@ from telethon import TelegramClient
 from telethon.tl.types import DocumentAttributeVideo
 
 from src.services.downloader import VideoDownloader
-from src.db import add_user, count_users, get_all_user_ids
+from src.db import add_user, get_users, count_users, get_all_user_ids
 from src.config import conf
-
-video_router = Router()
-downloader = VideoDownloader()
 
 CHANNEL_ID = conf.channel_id
 CHANNEL_URL = conf.channel_url
 
-# Инициализируем Telethon
+video_router = Router()
+downloader = VideoDownloader()
+
 tele_client = TelegramClient('telethon_bot', conf.api_id, conf.api_hash)
 
 STRINGS = {
@@ -30,10 +29,11 @@ STRINGS = {
         "btn_sub": "✅ Подписаться",
         "btn_check_sub": "🔄 Проверить подписку",
         "btn_channel": "📢 Наш канал",
-        "btn_settings": "⚙️ Настройки",
+        "btn_help": "🆘 Помощь",
         "btn_video": "🎬 Видео (Max)",
         "btn_audio": "🎵 Аудио (MP3)",
         "btn_cancel": "❌ Отмена",
+        "btn_settings": "⚙️ Настройки",
         "btn_change_lang": "🌐 Сменить язык",
         "btn_back": "⬅️ Назад",
         "link_ok": "Выберите качество видео:",
@@ -41,6 +41,7 @@ STRINGS = {
         "step_1": "🔍 Анализирую ссылку...",
         "step_2": "📥 Загружаю: {p}",
         "step_3": "⚙️ Обработка файла...",
+        "step_4": "📤 Отправка в Telegram...",
         "promo": "\n\n🚀 <b>Скачано через: @youtodownloadbot</b>"
     },
     "en": {
@@ -50,17 +51,19 @@ STRINGS = {
         "btn_sub": "✅ Subscribe",
         "btn_check_sub": "🔄 Check",
         "btn_channel": "📢 Channel",
-        "btn_settings": "⚙️ Settings",
+        "btn_help": "🆘 Help",
         "btn_video": "🎬 Video (Max)",
         "btn_audio": "🎵 Audio (MP3)",
         "btn_cancel": "❌ Cancel",
+        "btn_settings": "⚙️ Settings",
         "btn_change_lang": "🌐 Language",
         "btn_back": "⬅️ Back",
         "link_ok": "Choose video quality:",
         "link_ok_general": "Link accepted! What to download?",
         "step_1": "🔍 Analyzing...",
-        "step_2": "Downloading: {p}",
+        "step_2": "📥 Downloading: {p}",
         "step_3": "⚙️ Processing...",
+        "step_4": "📤 Sending...",
         "promo": "\n\n🚀 <b>Via: @youtodownloadbot</b>"
     }
 }
@@ -72,7 +75,7 @@ async def is_subscribed(bot, user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except:
+    except Exception:
         return False
 
 @video_router.message(Command("start"))
@@ -89,10 +92,8 @@ async def start_cmd(message: types.Message, state: FSMContext):
 async def set_language(callback: types.CallbackQuery, state: FSMContext):
     lang = callback.data.split("_")[1]
     await state.update_data(lang=lang)
-    kb_rows = [
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
-        [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]
-    ]
+    kb_rows = [[InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
+               [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]]
     if str(callback.from_user.id) == str(conf.admin_id):
         kb_rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_panel")])
     await callback.message.edit_text(STRINGS[lang]["welcome"].format(name=callback.from_user.full_name), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
@@ -101,7 +102,6 @@ async def set_language(callback: types.CallbackQuery, state: FSMContext):
 async def handle_url(message: types.Message, state: FSMContext):
     u_data = await state.get_data()
     lang = u_data.get("lang", "ru")
-    
     if not await is_subscribed(message.bot, message.from_user.id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=STRINGS[lang]["btn_sub"], url=CHANNEL_URL)],
@@ -111,10 +111,8 @@ async def handle_url(message: types.Message, state: FSMContext):
 
     url = message.text.strip()
     await state.update_data(download_url=url)
-    
     tmp = await message.answer(STRINGS[lang]["step_1"])
     info = await downloader.get_video_info(url)
-    
     is_yt = any(x in url.lower() for x in ['youtube.com', 'youtu.be']) and 'shorts' not in url.lower()
     
     rows = []
@@ -127,33 +125,25 @@ async def handle_url(message: types.Message, state: FSMContext):
     rows.append([InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")])
     rows.append([InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")])
     
-    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await tmp.delete()
-
     title = info['title'] if info else "Video"
     caption = f"🎬 <b>{title}</b>\n\n{STRINGS[lang]['link_ok'] if is_yt else STRINGS[lang]['link_ok_general']}"
-    
     if info and info.get('thumbnail'):
-        await message.answer_photo(photo=info['thumbnail'], caption=caption, parse_mode="HTML", reply_markup=kb)
+        await message.answer_photo(photo=info['thumbnail'], caption=caption, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     else:
-        await message.answer(caption, parse_mode="HTML", reply_markup=kb)
+        await message.answer(caption, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 @video_router.callback_query(F.data.startswith("dl_"))
 async def start_dl(callback: types.CallbackQuery, state: FSMContext):
     u_data = await state.get_data()
     url = u_data.get("download_url")
     lang = u_data.get("lang", "ru")
-    
     if not url: return await callback.answer("Ошибка: ссылка потеряна")
 
     parts = callback.data.split("_")
-    # --- ИСПРАВЛЕННАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ КАЧЕСТВА ---
-    if parts[1] == 'audio':
-        mode, quality = 'audio', None
-    elif parts[1] == 'res':
-        mode, quality = 'video', parts[2] # Берет 1080, 720 и т.д.
-    else:
-        mode, quality = 'video', None
+    # ИСПРАВЛЕНИЕ: если в callback есть 'res', значит это видео
+    mode = 'audio' if parts[1] == 'audio' else 'video'
+    quality = parts[2] if len(parts) > 2 else None
 
     try: await callback.message.delete()
     except: pass
@@ -171,29 +161,19 @@ async def start_dl(callback: types.CallbackQuery, state: FSMContext):
     try:
         res = await downloader.download(url, mode=mode, quality=quality, progress_callback=prog_cb)
         await status.edit_text(STRINGS[lang]["step_3"])
-        
         if not tele_client.is_connected(): await tele_client.start(bot_token=conf.bot_token)
         
         cap = f"🎬 <b>{res.title}</b>{STRINGS[lang]['promo']}"
         if mode == 'audio': cap = f"🎵 <b>{res.title}</b>{STRINGS[lang]['promo']}"
 
         await tele_client.send_file(
-            callback.message.chat.id, 
-            res.path, 
-            caption=cap, 
-            parse_mode='html',
-            supports_streaming=True,
-            attributes=[DocumentAttributeVideo(
-                duration=res.duration, 
-                w=res.width, 
-                h=res.height, 
-                supports_streaming=True
-            )] if mode == 'video' else []
+            callback.message.chat.id, res.path, caption=cap, parse_mode='html', supports_streaming=True,
+            attributes=[DocumentAttributeVideo(duration=res.duration, w=res.width, h=res.height, supports_streaming=True)] if mode == 'video' else []
         )
         await status.delete()
     except Exception as e:
         await status.edit_text(f"❌ Error: {str(e)[:100]}")
     finally:
-        if 'res' in locals() and os.path.exists(res.path): 
+        if 'res' in locals() and os.path.exists(res.path):
             try: os.remove(res.path)
             except: pass
