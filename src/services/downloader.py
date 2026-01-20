@@ -138,18 +138,13 @@ class VideoDownloader:
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
         cookies_path = os.path.join(os.getcwd(), "cookies.txt")
 
-        # Если это YouTube, используем максимально простую и надежную формулу
         if is_yt:
-            # Если качество передано (например, '1080'), качаем его. 
-            # Если нет — просто лучшее.
             if quality and str(quality).isdigit():
-                # Мы просим: "лучшее видео до высоты Q + лучший звук" 
-                # ИЛИ "просто лучший файл до высоты Q"
-                fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+                # Корректный формат: выбираем лучшее видео с нужной высотой
+                fmt = f"bestvideo[height={quality}]+bestaudio/bestvideo[height<={quality}]+bestaudio/best"
             else:
                 fmt = "bestvideo+bestaudio/best"
         else:
-            # Для остальных сервисов (Инста, ТТ)
             fmt = "bestvideo+bestaudio/best"
 
         opts = {
@@ -159,22 +154,21 @@ class VideoDownloader:
             "merge_output_format": "mp4",
             "user_agent": random.choice(self.user_agents),
             "rm_cachedir": True,
-            "quiet": False, # Оставляем False, чтобы ты видел прогресс в консоли
+            "quiet": False,
         }
 
-        # Принудительно подтягиваем куки, если файл существует
         if os.path.exists(cookies_path):
             opts["cookiefile"] = cookies_path
 
         if is_yt:
             opts["extractor_args"] = {
                 "youtube": {
-                    # Оставляем только 'web', так как для 'tv' и 'ios' часто нужен PO Token
                     "player_client": ["web"],
                 }
             }
-        
+
         return opts
+
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
