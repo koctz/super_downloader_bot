@@ -51,16 +51,20 @@ class VideoDownloader:
             except: return None
 
     def _get_opts(self, url, filename_tmpl, quality=None):
-        # ИСПРАВЛЕНИЕ: разрешаем yt-dlp выбирать лучший формат и аудио отдельно для склейки
-        if quality:
-            fmt = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]'
+        # Приводим качество к числу
+        quality_int = int(quality) if quality else None
+
+        # Формируем формат для yt-dlp
+        if quality_int:
+            # Основной вариант + fallback на любое лучшее видео с аудио
+            fmt = f'bestvideo[height<={quality_int}]+bestaudio/best'
         else:
-            fmt = 'bestvideo[height<=1080]+bestaudio/best'
+            fmt = 'bestvideo+bestaudio/best'
 
         opts = {
             'format': fmt,
             'outtmpl': filename_tmpl,
-            'merge_output_format': 'mp4', # ПРИНУДИТЕЛЬНО MP4 для 1080p
+            'merge_output_format': 'mp4',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
@@ -73,7 +77,6 @@ class VideoDownloader:
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url + str(time.time()))))[:8]
-        # Используем шаблон без жесткого расширения, так как yt-dlp добавит его сам
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}")
         loop = asyncio.get_running_loop()
 
@@ -97,20 +100,24 @@ class VideoDownloader:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_path = ydl.prepare_filename(info)
-            
-            # Если yt-dlp поменял расширение при склейке
+
+            # Проверяем наличие файла после скачивания
             if not os.path.exists(downloaded_path):
                 for ext in ['.mp4', '.mkv', '.webm']:
                     if os.path.exists(temp_path_raw + ext):
                         downloaded_path = temp_path_raw + ext
                         break
 
-            final_path = self._process_video(downloaded_path, info.get("duration", 0))
+            final_path = self._process_video(downloaded_path)
             return DownloadedVideo(
-                path=final_path, title=info.get("title", "Video"),
-                duration=int(info.get("duration") or 0), author=info.get("uploader", "Unknown"),
-                width=info.get("width", 0), height=info.get("height", 0),
-                thumb_url=info.get("thumbnail", ""), file_size=os.path.getsize(final_path)
+                path=final_path,
+                title=info.get("title", "Video"),
+                duration=int(info.get("duration") or 0),
+                author=info.get("uploader", "Unknown"),
+                width=info.get("width") or 0,
+                height=info.get("height") or 0,
+                thumb_url=info.get("thumbnail", ""),
+                file_size=os.path.getsize(final_path)
             )
 
     def _process_audio(self, input_path):
@@ -119,14 +126,12 @@ class VideoDownloader:
         if os.path.exists(input_path): os.remove(input_path)
         return output_path
 
-    def _process_video(self, input_path, duration):
+    def _process_video(self, input_path):
         output_path = input_path.rsplit('.', 1)[0] + "_f.mp4"
-        # Сохраняем оригинал, если это уже mp4, просто добавляем faststart
         if input_path.endswith('.mp4'):
             cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-movflags", "+faststart", output_path]
         else:
             cmd = ["ffmpeg", "-y", "-i", input_path, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", output_path]
-        
         subprocess.run(cmd, capture_output=True)
         if os.path.exists(output_path):
             if os.path.exists(input_path): os.remove(input_path)
