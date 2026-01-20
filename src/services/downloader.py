@@ -147,62 +147,63 @@ class VideoDownloader:
 
 # ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
-       url = url.strip()
-       is_yt = ("youtube.com" in url) or ("youtu.be" in url)
+        url = url.strip()
+        is_yt = ("youtube.com" in url) or ("youtu.be" in url)
 
-    # -----------------------------
-    # 🎯 Формат выбора качества
-    # -----------------------------
-    if is_yt and quality and quality.isdigit():
-        q = int(quality)
+        # -----------------------------
+        # 🎯 Формат выбора качества
+        # -----------------------------
+        if is_yt and quality and quality.isdigit():
+            q = int(quality)
 
-        # Жёсткий выбор AVC для Telegram (идеально для 360p/720p)
-        fmt = (
-            f"bestvideo[height={q}][vcodec*=avc]+bestaudio[acodec*=mp4a]/"
-            f"bestvideo[height={q}]+bestaudio/"
-            f"best"
-        )
+            # Жёсткий выбор AVC для Telegram (идеально для 360p/720p)
+            fmt = (
+                f"bestvideo[height={q}][vcodec*=avc]+bestaudio[acodec*=mp4a]/"
+                f"bestvideo[height={q}]+bestaudio/"
+                f"best"
+            )
 
-    else:
-        # Для TikTok / Instagram / VK — просто лучший MP4
-        fmt = "bestvideo+bestaudio/best"
+        else:
+            # Для TikTok / Instagram / VK — просто лучший MP4
+            fmt = "bestvideo+bestaudio/best"
 
-    # -----------------------------
-    # 🎯 Базовые настройки
-    # -----------------------------
-    opts = {
-        "format": fmt,
-        "outtmpl": filename_tmpl,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "merge_output_format": "mp4",
-        "user_agent": random.choice(self.user_agents),
-        "rm_cachedir": True,
-    }
-
-    # -----------------------------
-    # 🎯 YouTube: заставляем отдавать все потоки
-    # -----------------------------
-    if is_yt:
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": ["android", "web"],
-                "skip": ["dash", "hls"]
-            }
+        # -----------------------------
+        # 🎯 Базовые настройки
+        # -----------------------------
+        opts = {
+            "format": fmt,
+            "outtmpl": filename_tmpl,
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "merge_output_format": "mp4",
+            "user_agent": random.choice(self.user_agents),
+            "rm_cachedir": True,
         }
 
-        if os.path.exists("cookies.txt"):
-            opts["cookiefile"] = "cookies.txt"
+        # -----------------------------
+        # 🎯 YouTube: заставляем отдавать все потоки
+        # -----------------------------
+        if is_yt:
+            opts["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android", "web"],
+                    "skip": ["dash", "hls"]
+                }
+            }
 
-    # -----------------------------
-    # 🎯 Instagram: куки обязательны
-    # -----------------------------
-    elif "instagram.com" in url:
-        if os.path.exists("cookies.txt"):
-            opts["cookiefile"] = "cookies.txt"
+            if os.path.exists("cookies.txt"):
+                opts["cookiefile"] = "cookies.txt"
 
-    return opts
+        # -----------------------------
+        # 🎯 Instagram: куки обязательны
+        # -----------------------------
+        elif "instagram.com" in url:
+            if os.path.exists("cookies.txt"):
+                opts["cookiefile"] = "cookies.txt"
+
+        return opts
+
 
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
