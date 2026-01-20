@@ -44,9 +44,8 @@ class VideoDownloader:
         return url
         
     async def get_yt_resolutions(self, url: str):
-        """Метод специально для YouTube: вытягивает только доступные разрешения"""
+        """Метод специально для YouTube: вытягивает только реально доступные разрешения"""
         url = self._normalize_url(url)
-        # Обязательно используем те же куки и настройки, что при скачивании
         opts = {
             'quiet': True,
             'no_warnings': True,
@@ -58,15 +57,12 @@ class VideoDownloader:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 formats = info.get('formats', [])
-                
-                # Собираем уникальные высоты видео (например, 360, 720, 1080)
-                # Игнорируем те, что ниже 360p, чтобы не спамить кнопками
                 available_heights = set()
                 for f in formats:
                     h = f.get('height')
+                    # Фильтруем только видео-потоки
                     if h and h >= 360 and f.get('vcodec') != 'none':
                         available_heights.add(h)
-                
                 return sorted(list(available_heights), reverse=True)
         
         return await asyncio.to_thread(extract)
@@ -112,77 +108,47 @@ class VideoDownloader:
     def _process_video(self, input_path, duration, is_insta=False):
         base = os.path.basename(input_path).replace("raw_", "final_")
         ext = os.path.splitext(base)[1].lower()
-
         output_path = os.path.join(self.download_path, base)
 
         if not os.path.exists(input_path):
             return input_path
 
-        # -----------------------------
-        # 🎯 Вариант B — НЕ перекодируем webm/mkv
-        # -----------------------------
-        if ext in [".webm", ".mkv"]:
-            # Просто переименовываем и переносим
-            os.rename(input_path, output_path)
-            return output_path
-
-        # -----------------------------
-        # 🎯 MP4 — faststart
-        # -----------------------------
+        # Если это MP4, делаем faststart для стриминга в ТГ
         if ext == ".mp4":
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-c", "copy",
-                "-movflags", "+faststart",
-                output_path
-            ]
+            cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-movflags", "+faststart", output_path]
             subprocess.run(cmd, capture_output=True)
-
             if os.path.exists(output_path):
                 os.remove(input_path)
                 return output_path
 
+        # Для MKV/WebM просто переносим (ТГ их поддерживает как файлы или видео)
+        if ext in [".webm", ".mkv"]:
+            os.rename(input_path, output_path)
+            return output_path
+
         return input_path
 
-
-# ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
         url = url.strip()
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
-        is_insta = "instagram.com" in url
-        is_vk = "vk.com" in url or "vk.ru" in url
-        is_tt = "tiktok.com" in url
-
-        # -----------------------------
-        # 🎯 YouTube — вариант B
-        # Скачиваем исходный поток (VP9/AV1/AVC)
-        # -----------------------------
+        
         if is_yt and quality and quality.isdigit():
             q = int(quality)
+            # СТРАТЕГИЯ ВЫБОРА: 
+            # 1. Пытаемся взять AV1 (самый легкий) + аудио m4a
+            # 2. ИЛИ VP9 + аудио m4a
+            # 3. ИЛИ AVC (стандарт) + аудио m4a
+            # 4. В конце убираем формат 18 (avc1.42001E), если просили качество выше 360
+            vcodec_filter = "[vcodec!*=avc1.42001E]" if q > 360 else ""
+            
             fmt = (
-                f"bestvideo[height={q}]+bestaudio/"
-                f"bestvideo[height<={q}]+bestaudio/"
-                f"best"
+                f"bestvideo[height<={q}][vcodec^=av01]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={q}][vcodec^=vp9]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={q}]{vcodec_filter}+bestaudio[ext=m4a]/"
+                f"best[height<={q}]"
             )
-
-        # -----------------------------
-        # 🎯 Instagram — всегда MP4
-        # -----------------------------
-        elif is_insta:
+        elif "instagram.com" in url or "vk.com" in url:
             fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
-
-        # -----------------------------
-        # 🎯 VK — всегда MP4
-        # -----------------------------
-        elif is_vk:
-            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
-
-        # -----------------------------
-        # 🎯 TikTok — API, формат не важен
-        # -----------------------------
-        elif is_tt:
-            fmt = "best"
-
         else:
             fmt = "bestvideo+bestaudio/best"
 
@@ -198,13 +164,9 @@ class VideoDownloader:
         }
 
         if is_yt:
-            opts["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android", "web"]
-                }
-            }
-
-        if is_insta and os.path.exists("cookies.txt"):
+            opts["extractor_args"] = {"youtube": {"player_client": ["android", "web"]}}
+        
+        if ("instagram.com" in url) and os.path.exists("cookies.txt"):
             opts["cookiefile"] = "cookies.txt"
 
         return opts
@@ -213,12 +175,15 @@ class VideoDownloader:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url + str(time.time()))))[:8]
         q_suffix = quality if quality else "max"
-        temp_path = os.path.join(self.download_path, f"raw_{q_suffix}_{unique_id}.mp4")
+        
+        # Временный путь (yt-dlp сам добавит расширение при мердже)
+        temp_path = os.path.join(self.download_path, f"raw_{q_suffix}_{unique_id}")
         loop = asyncio.get_running_loop()
 
         if "tiktok.com" in url and mode != 'audio':
             try:
-                data = await self._download_tiktok_via_api(url, temp_path)
+                # ТикТок через API обычно быстрее и без ватермарок
+                data = await self._download_tiktok_via_api(url, temp_path + ".mp4")
                 return data
             except:
                 pass
@@ -243,15 +208,12 @@ class VideoDownloader:
 
         opts = self._get_opts(url, temp_path_raw, quality)
         opts['progress_hooks'] = [ydl_hook]
-        print(f"DEBUG: Скачиваю URL: {url} | Выбранное качество: {quality}")
+        
         with yt_dlp.YoutubeDL(opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=True)
-            except Exception as e:
-                raise DownloadError(f"Download failed: {str(e)}")
-                
+            info = ydl.extract_info(url, download=True)
             downloaded_path = ydl.prepare_filename(info)
             
+            # Если файл не найден (бывает при смене расширений в процессе мерджа)
             if not os.path.exists(downloaded_path):
                 base_no_ext = os.path.splitext(downloaded_path)[0]
                 for ext in [".mp4", ".mkv", ".webm"]:
