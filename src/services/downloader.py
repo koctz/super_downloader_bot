@@ -119,13 +119,14 @@ class VideoDownloader:
 
 # ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
-        # Если качество не передано, ставим 1080
-        q = quality if quality else "1080"
-        
-        # 🔥 Новая логика строки формата:
-        # Сначала ищем видео нужной высоты (не выше q) в MP4, 
-        # если нет - берем любое видео не выше q и склеиваем с лучшим звуком.
-        fmt = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]/best"
+        if quality and quality.isdigit():
+            # 🔥 ЖЕСТКИЙ ВЫБОР:
+            # Ищем видео строго не выше выбранного качества + лучший звук
+            # Либо просто лучшее видео не выше этого качества (со звуком внутри)
+            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"
+        else:
+            # Если качество не указано, берем 1080p или ниже
+            fmt = "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
 
         opts = {
             'format': fmt,
@@ -135,16 +136,18 @@ class VideoDownloader:
             'no_warnings': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
-            'merge_output_format': 'mp4', # Обязательно для склейки разных потоков
+            # Конвертируем в mp4 для совместимости с Telegram
+            'merge_output_format': 'mp4',
             'user_agent': random.choice(self.user_agents),
+            # Помогаем yt-dlp разобраться с форматами YouTube
+            'youtube_include_dash_manifest': True,
+            'youtube_include_hls_manifest': True,
         }
         
         if "instagram.com" in url:
             cookies_path = os.path.join(os.getcwd(), "cookies.txt")
             if os.path.exists(cookies_path): opts['cookiefile'] = cookies_path
         elif "youtube.com" in url or "youtu.be" in url:
-            # Важно: ограничиваем протокол, чтобы не лезли m3u8, которые весят странно
-            opts['prefer_native_hls'] = True
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
             
         return opts
