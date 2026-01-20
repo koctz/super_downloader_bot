@@ -190,6 +190,7 @@ async def handle_url(message: types.Message, state: FSMContext):
     u_data = await state.get_data()
     lang = u_data.get("lang", "ru")
     
+    # 1. Проверка подписки
     if not await is_subscribed(message.bot, message.from_user.id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=STRINGS[lang]["btn_sub"], url=CHANNEL_URL)],
@@ -201,17 +202,41 @@ async def handle_url(message: types.Message, state: FSMContext):
     await state.update_data(download_url=url)
     
     tmp = await message.answer(STRINGS[lang]["step_1"])
+    
+    # Получаем общую инфу (название, превью)
     info = await downloader.get_video_info(url)
     
     is_yt = any(x in url.lower() for x in ['youtube.com', 'youtu.be']) and 'shorts' not in url.lower()
     
     rows = []
     if is_yt:
-        rows.append([InlineKeyboardButton(text="📹 1080p", callback_data="dl_res_1080"), InlineKeyboardButton(text="📹 720p", callback_data="dl_res_720")])
-        rows.append([InlineKeyboardButton(text="📹 480p", callback_data="dl_res_480"), InlineKeyboardButton(text="📹 360p", callback_data="dl_res_360")])
+        try:
+            # 🔥 ВАЖНО: Вызываем твой новый метод для анализа форматов
+            resolutions = await downloader.get_yt_resolutions(url)
+            
+            if resolutions:
+                # Генерируем кнопки динамически (по 2 в ряд)
+                temp_row = []
+                for res in resolutions:
+                    temp_row.append(InlineKeyboardButton(text=f"📹 {res}p", callback_data=f"dl_res_{res}"))
+                    if len(temp_row) == 2:
+                        rows.append(temp_row)
+                        temp_row = []
+                if temp_row:
+                    rows.append(temp_row)
+            else:
+                # Если resolutions пуст (такое бывает без Node.js), даем стандарт
+                rows.append([InlineKeyboardButton(text="📹 360p", callback_data="dl_res_360")])
+        except Exception as e:
+            print(f"Error getting resolutions: {e}")
+            # Резервный вариант, если метод упал
+            rows.append([InlineKeyboardButton(text="📹 720p", callback_data="dl_res_720"), 
+                         InlineKeyboardButton(text="📹 360p", callback_data="dl_res_360")])
     else:
+        # Логика для Instagram, TikTok, VK
         rows.append([InlineKeyboardButton(text=STRINGS[lang]["btn_video"], callback_data="dl_video")])
     
+    # Добавляем общие кнопки
     rows.append([InlineKeyboardButton(text=STRINGS[lang]["btn_audio"], callback_data="dl_audio")])
     rows.append([InlineKeyboardButton(text=STRINGS[lang]["btn_cancel"], callback_data="cancel_download")])
     
