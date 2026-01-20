@@ -147,49 +147,63 @@ class VideoDownloader:
 
 # ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
-        is_yt = "youtube.com" in url or "youtu.be" in url
-        
-        if is_yt and quality and quality.isdigit():
-            q = int(quality)
-            # Если выбрано 720p, 1080p, 4K и т.д.
-            if q >= 720:
-                # МЫ ГОВОРИМ: Возьми лучшее видео не выше Q (но только НЕ формат 18) 
-                # и приклей к нему лучший звук.
-                # 'vcodec!*=avc1.42001E' — это техническое имя того самого формата №18
-                fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/bestvideo[height<={q}]+bestaudio/best"
-            else:
-                # Для 360p и ниже оставляем как есть
-                fmt = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]/best"
-        elif quality and quality.isdigit():
-            # Для других платформ
-            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
-        else:
-            # Дефолт для Инсты/ТТ
-            fmt = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+    url = url.strip()
+    is_yt = ("youtube.com" in url) or ("youtu.be" in url)
 
-        opts = {
-            'format': fmt,
-            'outtmpl': filename_tmpl,
-            'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
-            'merge_output_format': 'mp4',
-            'user_agent': random.choice(self.user_agents),
-            'rm_cachedir': True,  # Обязательно чистим кэш
+    # -----------------------------
+    # 🎯 Формат выбора качества
+    # -----------------------------
+    if is_yt and quality and quality.isdigit():
+        q = int(quality)
+
+        # Жёсткий выбор AVC для Telegram (идеально для 360p/720p)
+        fmt = (
+            f"bestvideo[height={q}][vcodec*=avc]+bestaudio[acodec*=mp4a]/"
+            f"bestvideo[height={q}]+bestaudio/"
+            f"best"
+        )
+
+    else:
+        # Для TikTok / Instagram / VK — просто лучший MP4
+        fmt = "bestvideo+bestaudio/best"
+
+    # -----------------------------
+    # 🎯 Базовые настройки
+    # -----------------------------
+    opts = {
+        "format": fmt,
+        "outtmpl": filename_tmpl,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "merge_output_format": "mp4",
+        "user_agent": random.choice(self.user_agents),
+        "rm_cachedir": True,
+    }
+
+    # -----------------------------
+    # 🎯 YouTube: заставляем отдавать все потоки
+    # -----------------------------
+    if is_yt:
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "web"],
+                "skip": ["dash", "hls"]
+            }
         }
 
-        if "instagram.com" in url:
-            if os.path.exists("cookies.txt"): opts['cookiefile'] = "cookies.txt"
-        elif is_yt:
-            # Эти аргументы заставляют YouTube отдавать все потоки
-            opts['extractor_args'] = {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                    'skip': ['dash', 'hls'] 
-                }
-            }
-            
-        return opts
+        if os.path.exists("cookies.txt"):
+            opts["cookiefile"] = "cookies.txt"
+
+    # -----------------------------
+    # 🎯 Instagram: куки обязательны
+    # -----------------------------
+    elif "instagram.com" in url:
+        if os.path.exists("cookies.txt"):
+            opts["cookiefile"] = "cookies.txt"
+
+    return opts
+
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
