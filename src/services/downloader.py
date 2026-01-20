@@ -138,10 +138,12 @@ class VideoDownloader:
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
         cookies_path = os.path.join(os.getcwd(), "cookies.txt")
 
-        # Настраиваем формат
+        # Если это Ютуб, мы ОЧЕНЬ ЖЕСТКО задаем форматы
         if is_yt and quality:
-            # Пытаемся взять лучшее видео + звук, исключая формат 18 (наш "любимый" 109МБ)
-            fmt = f"bestvideo[height<={quality}][format_id!=18]+bestaudio/best[height<={quality}][format_id!=18]/best"
+            # Ищем видео (не формат 18) + аудио и объединяем
+            # Если не находит, берет просто лучшее до этой высоты
+            q = quality
+            fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/best[height<={q}][vcodec!*=avc1.42001E]/best"
         else:
             fmt = "bestvideo+bestaudio/best"
 
@@ -152,18 +154,20 @@ class VideoDownloader:
             "merge_output_format": "mp4",
             "user_agent": random.choice(self.user_agents),
             "rm_cachedir": True,
-            "quiet": False, # Видим всё в консоли
+            "quiet": False,
+            "no_warnings": False,
+            # ОЧЕНЬ ВАЖНО: принудительно заставляем искать Node.js
+            "check_formats": True, 
         }
 
         if os.path.exists(cookies_path):
             opts["cookiefile"] = cookies_path
 
         if is_yt:
-            # ОСТАВЛЯЕМ ТОЛЬКО ТЕ, КТО РАБОТАЕТ С КУКАМИ И ВЫСОКИМ КАЧЕСТВОМ
             opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["tv", "web"], 
-                    # Android скипаем, так как он мешает кукам
+                    # Используем связку TV и WEB, это сейчас стандарт обхода
+                    "player_client": ["tv", "web"],
                 }
             }
         
