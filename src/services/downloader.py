@@ -42,10 +42,36 @@ class VideoDownloader:
             video_id = url.split("shorts/")[1].split("?")[0]
             url = f"https://www.youtube.com/watch?v={video_id}"
         return url
-    
+
+    async def get_yt_resolutions(self, url: str):
+        """Метод для получения доступных разрешений YouTube"""
+        url = self._normalize_url(url)
+        opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'user_agent': random.choice(self.user_agents),
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+            'extractor_args': {'youtube': {'player_client': ['mweb', 'tv']}},
+        }
+        
+        def extract():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    formats = info.get('formats', [])
+                    res = set()
+                    for f in formats:
+                        h = f.get('height')
+                        if h and h >= 360 and f.get('vcodec') != 'none':
+                            res.add(h)
+                    return sorted(list(res), reverse=True) if res else [1080, 720, 360]
+                except:
+                    return [1080, 720, 360]
+        
+        return await asyncio.to_thread(extract)
+
     async def get_video_info(self, url: str):
         url = self._normalize_url(url)
-        loop = asyncio.get_running_loop()
         return await asyncio.to_thread(self._get_info_sync, url)
 
     def _get_info_sync(self, url: str):
@@ -83,71 +109,46 @@ class VideoDownloader:
 
     def _process_video(self, input_path, duration, is_insta=False):
         base = os.path.basename(input_path).replace("raw_", "final_")
-        ext = os.path.splitext(base)[1].lower()
+        if not base.endswith(".mp4"):
+            base = os.path.splitext(base)[0] + ".mp4"
+            
         output_path = os.path.join(self.download_path, base)
-
         if not os.path.exists(input_path):
             return input_path
 
-        # Если это MP4, делаем faststart для стриминга в ТГ
-        if ext == ".mp4":
-            cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-movflags", "+faststart", output_path]
-            subprocess.run(cmd, capture_output=True)
-            if os.path.exists(output_path):
-                os.remove(input_path)
-                return output_path
-
-        # Для MKV/WebM просто переносим (ТГ их поддерживает как файлы или видео)
-        if ext in [".webm", ".mkv"]:
-            os.rename(input_path, output_path)
-            return output_path
-
-        return input_path
-
-async def get_yt_resolutions(self, url: str):
-        url = self._normalize_url(url)
-        # Пробуем получить форматы максимально мягким способом
-        opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'user_agent': random.choice(self.user_agents),
-            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-            'extractor_args': {'youtube': {'player_client': ['web', 'mweb', 'tv']}},
-            'check_formats': False, # Не проверяем доступность каждого, просто верим списку
-        }
+        file_size = os.path.getsize(input_path)
+        MTPROTO_LIMIT = 1900 * 1024 * 1024 # Чуть меньше 2ГБ для запаса
         
-        def extract():
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                formats = info.get('formats', [])
-                
-                res = set()
-                for f in formats:
-                    h = f.get('height')
-                    if h and h >= 360 and (f.get('vcodec') != 'none' or f.get('acodec') != 'none'):
-                        res.add(h)
-                
-                # Если YouTube совсем "жадничает", добавим стандартный набор вручную
-                if not res:
-                    return [1080, 720, 480, 360]
-                
-                return sorted(list(res), reverse=True)
-        
+        # Если файл уже MP4 и проходит по весу — используем copy (без потери качества)
+        if file_size <= MTPROTO_LIMIT and not is_insta and input_path.lower().endswith(".mp4"):
+            cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-map_metadata", "0", "-movflags", "+faststart", output_path]
+        else:
+            # Конвертируем с сохранением разрешения (убрали scale=720)
+            cmd = ["ffmpeg", "-y", "-i", input_path, 
+                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", 
+                   "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_path]
+
         try:
-            return await asyncio.to_thread(extract)
+            subprocess.run(cmd, capture_output=True, timeout=1200)
         except Exception as e:
-            print(f"Extraction failed: {e}. Returning default resolutions.")
-            return [1080, 720, 360]
+            print(f"FFmpeg Error: {e}")
+            if input_path.endswith(".mp4"): return input_path
+            
+        if os.path.exists(output_path):
+            if os.path.exists(input_path):
+                try: os.remove(input_path)
+                except: pass
+            return output_path
+        return input_path
 
     def _get_opts(self, url, filename_tmpl, quality=None):
         url = url.strip()
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
         cookies_path = os.path.join(os.getcwd(), "cookies.txt")
 
-        # Самая отказоустойчивая формула
         if is_yt and quality:
-            # Сначала пытаемся собрать видео+аудио, если нет - берем любой лучший файл этой высоты
-            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+            # Исключаем формат 18 (109МБ), если нужно качество выше
+            fmt = f"bestvideo[height<={quality}][format_id!=18]+bestaudio/best[height<={quality}][format_id!=18]/best"
         else:
             fmt = "bestvideo+bestaudio/best"
 
@@ -160,37 +161,30 @@ async def get_yt_resolutions(self, url: str):
             "rm_cachedir": True,
             "quiet": False,
             "nocheckcertificate": True,
-            "ignoreerrors": True, # Не падать при мелких ошибках
         }
 
         if os.path.exists(cookies_path):
             opts["cookiefile"] = cookies_path
 
         if is_yt:
-            # МЕНЯЕМ ТАКТИКУ: используем mweb (мобильный веб), он меньше всего требует токенов
             opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["mweb", "web", "tv"],
-                    "skip": ["dash", "hls"] # Иногда помогает пробить Requested format
+                    "player_client": ["mweb", "tv"],
+                    "skip": ["dash", "hls"]
                 }
             }
-        
+            
         return opts
-
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url + str(time.time()))))[:8]
-        q_suffix = quality if quality else "max"
-        
-        # Временный путь (yt-dlp сам добавит расширение при мердже)
-        temp_path = os.path.join(self.download_path, f"raw_{q_suffix}_{unique_id}")
+        temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
         loop = asyncio.get_running_loop()
 
         if "tiktok.com" in url and mode != 'audio':
             try:
-                # ТикТок через API обычно быстрее и без ватермарок
-                data = await self._download_tiktok_via_api(url, temp_path + ".mp4")
+                data = await self._download_tiktok_via_api(url, temp_path)
                 return data
             except:
                 pass
@@ -215,12 +209,15 @@ async def get_yt_resolutions(self, url: str):
 
         opts = self._get_opts(url, temp_path_raw, quality)
         opts['progress_hooks'] = [ydl_hook]
-        
+
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            try:
+                info = ydl.extract_info(url, download=True)
+            except Exception as e:
+                raise DownloadError(f"Download failed: {str(e)}")
+                
             downloaded_path = ydl.prepare_filename(info)
             
-            # Если файл не найден (бывает при смене расширений в процессе мерджа)
             if not os.path.exists(downloaded_path):
                 base_no_ext = os.path.splitext(downloaded_path)[0]
                 for ext in [".mp4", ".mkv", ".webm"]:
