@@ -138,9 +138,10 @@ class VideoDownloader:
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
         cookies_path = os.path.join(os.getcwd(), "cookies.txt")
 
+        # Настраиваем формат
         if is_yt and quality:
-            # Пытаемся взять лучшее до нужной высоты
-            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+            # Пытаемся взять лучшее видео + звук, исключая формат 18 (наш "любимый" 109МБ)
+            fmt = f"bestvideo[height<={quality}][format_id!=18]+bestaudio/best[height<={quality}][format_id!=18]/best"
         else:
             fmt = "bestvideo+bestaudio/best"
 
@@ -151,18 +152,18 @@ class VideoDownloader:
             "merge_output_format": "mp4",
             "user_agent": random.choice(self.user_agents),
             "rm_cachedir": True,
-            "nocheckcertificate": True,
+            "quiet": False, # Видим всё в консоли
         }
 
         if os.path.exists(cookies_path):
             opts["cookiefile"] = cookies_path
 
         if is_yt:
-            # Комбинация TV и Android - самая стабильная против SABR (ошибки в твоем логе)
+            # ОСТАВЛЯЕМ ТОЛЬКО ТЕ, КТО РАБОТАЕТ С КУКАМИ И ВЫСОКИМ КАЧЕСТВОМ
             opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["tv", "android"],
-                    "player_skip": ["web"] # Пропускаем web, так как он выдает ошибку SABR
+                    "player_client": ["tv", "web"], 
+                    # Android скипаем, так как он мешает кукам
                 }
             }
         
