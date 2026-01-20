@@ -119,11 +119,13 @@ class VideoDownloader:
 
 # ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
-        if quality:
-            # Мы убрали [ext=mp4], чтобы он скачивал ЛЮБОЙ формат (WebM/MKV), где есть высокое качество
-            fmt = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best'
-        else:
-            fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+        # Если качество не передано, ставим 1080
+        q = quality if quality else "1080"
+        
+        # 🔥 Новая логика строки формата:
+        # Сначала ищем видео нужной высоты (не выше q) в MP4, 
+        # если нет - берем любое видео не выше q и склеиваем с лучшим звуком.
+        fmt = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]/best"
 
         opts = {
             'format': fmt,
@@ -133,11 +135,7 @@ class VideoDownloader:
             'no_warnings': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
-            
-            # 🔥 ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
-            # Эта строчка заставит yt-dlp самому склеить видео+аудио в MP4
-            'merge_output_format': 'mp4',
-            
+            'merge_output_format': 'mp4', # Обязательно для склейки разных потоков
             'user_agent': random.choice(self.user_agents),
         }
         
@@ -145,6 +143,8 @@ class VideoDownloader:
             cookies_path = os.path.join(os.getcwd(), "cookies.txt")
             if os.path.exists(cookies_path): opts['cookiefile'] = cookies_path
         elif "youtube.com" in url or "youtu.be" in url:
+            # Важно: ограничиваем протокол, чтобы не лезли m3u8, которые весят странно
+            opts['prefer_native_hls'] = True
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
             
         return opts
