@@ -151,20 +151,22 @@ class VideoDownloader:
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
 
         # -----------------------------
-        # 🎯 Формат выбора качества
+        # 🎯 Формат выбора качества (A)
         # -----------------------------
         if is_yt and quality and quality.isdigit():
             q = int(quality)
 
-            # Жёсткий выбор AVC для Telegram (идеально для 360p/720p)
+            # 1) Пытаемся взять AVC строго в выбранном качестве
             fmt = (
                 f"bestvideo[height={q}][vcodec*=avc]+bestaudio[acodec*=mp4a]/"
+                # 2) Если нет AVC — берём любой кодек в этом качестве
                 f"bestvideo[height={q}]+bestaudio/"
+                # 3) Если нет такого качества — fallback на best
                 f"best"
             )
 
         else:
-            # Для TikTok / Instagram / VK — просто лучший MP4
+            # Для TikTok / Instagram / VK — лучший MP4
             fmt = "bestvideo+bestaudio/best"
 
         # -----------------------------
@@ -182,7 +184,7 @@ class VideoDownloader:
         }
 
         # -----------------------------
-        # 🎯 YouTube: заставляем отдавать все потоки
+        # 🎯 YouTube: отдаём ВСЕ потоки
         # -----------------------------
         if is_yt:
             opts["extractor_args"] = {
@@ -203,8 +205,6 @@ class VideoDownloader:
                 opts["cookiefile"] = "cookies.txt"
 
         return opts
-
-
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
