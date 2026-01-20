@@ -42,7 +42,35 @@ class VideoDownloader:
             video_id = url.split("shorts/")[1].split("?")[0]
             url = f"https://www.youtube.com/watch?v={video_id}"
         return url
-
+        
+    async def get_yt_resolutions(self, url: str):
+        """Метод специально для YouTube: вытягивает только доступные разрешения"""
+        url = self._normalize_url(url)
+        # Обязательно используем те же куки и настройки, что при скачивании
+        opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'user_agent': random.choice(self.user_agents),
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None
+        }
+        
+        def extract():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                formats = info.get('formats', [])
+                
+                # Собираем уникальные высоты видео (например, 360, 720, 1080)
+                # Игнорируем те, что ниже 360p, чтобы не спамить кнопками
+                available_heights = set()
+                for f in formats:
+                    h = f.get('height')
+                    if h and h >= 360 and f.get('vcodec') != 'none':
+                        available_heights.add(h)
+                
+                return sorted(list(available_heights), reverse=True)
+        
+        return await asyncio.to_thread(extract)
+    
     async def get_video_info(self, url: str):
         url = self._normalize_url(url)
         loop = asyncio.get_running_loop()
@@ -119,22 +147,17 @@ class VideoDownloader:
 
 # ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
-        # Определяем, YouTube это или нет
-        is_youtube = "youtube.com" in url or "youtu.be" in url
+        is_yt = "youtube.com" in url or "youtu.be" in url
         
-        if is_youtube and quality and quality.isdigit():
-            # Для YouTube: исключаем комбинированный формат 18 (360p), 
-            # если запрошено качество выше, и собираем из видео + аудио.
+        if is_yt and quality and quality.isdigit():
             q = quality
-            if int(q) > 360:
-                fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/best[height<={q}]"
+            # Если просим 720 и выше, запрещаем формат №18 (avc1.42001E), который весит 109МБ
+            if int(q) >= 720:
+                fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/bestvideo[height<={q}]+bestaudio/best"
             else:
                 fmt = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]"
-        elif quality and quality.isdigit():
-            # Для других платформ (если они поддерживают выбор качества)
-            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
         else:
-            # По умолчанию (Instagram, TikTok, VK и т.д.)
+            # Логика для Instagram, TikTok и прочих (максимальное качество)
             fmt = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
 
         opts = {
@@ -143,23 +166,16 @@ class VideoDownloader:
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
-            'geo_bypass': True,
-            'nocheckcertificate': True,
             'merge_output_format': 'mp4',
             'user_agent': random.choice(self.user_agents),
+            'rm_cachedir': True, # Очистка кэша обязательна
         }
 
-        # Логика куки и специфичных аргументов
         if "instagram.com" in url:
-            cookies_path = os.path.join(os.getcwd(), "cookies.txt")
-            if os.path.exists(cookies_path): 
-                opts['cookiefile'] = cookies_path
-        elif is_youtube:
+            if os.path.exists("cookies.txt"): opts['cookiefile'] = "cookies.txt"
+        elif is_yt:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
-            # Добавляем манифесты для лучшего поиска форматов
-            opts['youtube_include_dash_manifest'] = True
-            opts['youtube_include_hls_manifest'] = True
-
+            
         return opts
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
