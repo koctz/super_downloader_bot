@@ -111,39 +111,39 @@ class VideoDownloader:
 
     def _process_video(self, input_path, duration, is_insta=False):
         base = os.path.basename(input_path).replace("raw_", "final_")
-        if not base.endswith(".mp4"):
-            base = os.path.splitext(base)[0] + ".mp4"
-            
+        ext = os.path.splitext(base)[1].lower()
+
         output_path = os.path.join(self.download_path, base)
+
         if not os.path.exists(input_path):
             return input_path
 
-        file_size = os.path.getsize(input_path)
-        MTPROTO_LIMIT = 1980 * 1024 * 1024 
-        
-        # ПРАВКА: Если файл MP4 и под лимитом - просто копируем (быстро и без потери качества)
-        if file_size <= MTPROTO_LIMIT and not is_insta and input_path.endswith(".mp4"):
-            cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-map_metadata", "0", "-movflags", "+faststart", output_path]
-        else:
-            # ПРАВКА: Если конвертируем, убираем принудительный scale=720, чтобы сохранить исходное разрешение
-            # Мы используем crf 23 для баланса веса и качества
-            cmd = ["ffmpeg", "-y", "-i", input_path, 
-                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", 
-                   "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_path]
-
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=900)
-        except Exception as e:
-            print(f"FFmpeg Error: {e}")
-            if input_path.endswith(".mp4"):
-                return input_path
-            
-        if os.path.exists(output_path):
-            if os.path.exists(input_path):
-                try: os.remove(input_path)
-                except: pass
+        # -----------------------------
+        # 🎯 Вариант B — НЕ перекодируем webm/mkv
+        # -----------------------------
+        if ext in [".webm", ".mkv"]:
+            # Просто переименовываем и переносим
+            os.rename(input_path, output_path)
             return output_path
+
+        # -----------------------------
+        # 🎯 MP4 — faststart
+        # -----------------------------
+        if ext == ".mp4":
+            cmd = [
+                "ffmpeg", "-y", "-i", input_path,
+                "-c", "copy",
+                "-movflags", "+faststart",
+                output_path
+            ]
+            subprocess.run(cmd, capture_output=True)
+
+            if os.path.exists(output_path):
+                os.remove(input_path)
+                return output_path
+
         return input_path
+
 
 # ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
@@ -154,13 +154,14 @@ class VideoDownloader:
         is_tt = "tiktok.com" in url
 
         # -----------------------------
-        # 🎯 YouTube — ABC логика
+        # 🎯 YouTube — вариант B
+        # Скачиваем исходный поток (VP9/AV1/AVC)
         # -----------------------------
         if is_yt and quality and quality.isdigit():
             q = int(quality)
             fmt = (
-                f"bestvideo[height={q}][vcodec*=avc]+bestaudio[acodec*=mp4a]/"
                 f"bestvideo[height={q}]+bestaudio/"
+                f"bestvideo[height<={q}]+bestaudio/"
                 f"best"
             )
 
@@ -177,20 +178,14 @@ class VideoDownloader:
             fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
 
         # -----------------------------
-        # 🎯 TikTok — формат не важен (API)
+        # 🎯 TikTok — API, формат не важен
         # -----------------------------
         elif is_tt:
             fmt = "best"
 
-        # -----------------------------
-        # 🎯 Остальные — лучший MP4
-        # -----------------------------
         else:
-            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+            fmt = "bestvideo+bestaudio/best"
 
-        # -----------------------------
-        # 🎯 Базовые настройки
-        # -----------------------------
         opts = {
             "format": fmt,
             "outtmpl": filename_tmpl,
@@ -202,9 +197,6 @@ class VideoDownloader:
             "rm_cachedir": True,
         }
 
-        # -----------------------------
-        # 🎯 YouTube: отдаём ВСЕ потоки
-        # -----------------------------
         if is_yt:
             opts["extractor_args"] = {
                 "youtube": {
@@ -213,14 +205,10 @@ class VideoDownloader:
                 }
             }
 
-        # -----------------------------
-        # 🎯 Instagram: куки обязательны
-        # -----------------------------
         if is_insta and os.path.exists("cookies.txt"):
             opts["cookiefile"] = "cookies.txt"
 
         return opts
-
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
