@@ -31,8 +31,7 @@ class VideoDownloader:
             
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15'
         ]
 
     def _normalize_url(self, url: str) -> str:
@@ -44,14 +43,13 @@ class VideoDownloader:
         return url
 
     async def get_yt_resolutions(self, url: str):
-        """Метод для получения доступных разрешений YouTube"""
         url = self._normalize_url(url)
         opts = {
             'quiet': True,
             'no_warnings': True,
-            'user_agent': random.choice(self.user_agents),
             'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-            'extractor_args': {'youtube': {'player_client': ['mweb', 'tv']}},
+            'javascript_executor': '/usr/bin/node',
+            'extractor_args': {'youtube': {'player_client': ['web', 'tv']}},
         }
         
         def extract():
@@ -62,7 +60,8 @@ class VideoDownloader:
                     res = set()
                     for f in formats:
                         h = f.get('height')
-                        if h and h >= 360 and f.get('vcodec') != 'none':
+                        # Нам нужны только форматы с видео (не ID 18)
+                        if h and h >= 360 and f.get('vcodec') != 'none' and f.get('format_id') != '18':
                             res.add(h)
                     return sorted(list(res), reverse=True) if res else [1080, 720, 360]
                 except:
@@ -79,7 +78,6 @@ class VideoDownloader:
             'extract_flat': True,
             'quiet': True,
             'no_warnings': True,
-            'user_agent': random.choice(self.user_agents),
             'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -88,12 +86,7 @@ class VideoDownloader:
                 thumb = info.get('thumbnail')
                 if not thumb and info.get('thumbnails'):
                     thumb = info['thumbnails'][-1].get('url')
-                
-                return {
-                    'title': info.get('title', 'Video'),
-                    'thumbnail': thumb,
-                    'duration': info.get('duration')
-                }
+                return {'title': info.get('title', 'Video'), 'thumbnail': thumb, 'duration': info.get('duration')}
             except:
                 return None
 
@@ -108,46 +101,31 @@ class VideoDownloader:
         return output_path
 
     def _process_video(self, input_path, duration, is_insta=False):
+        if not os.path.exists(input_path): return input_path
         base = os.path.basename(input_path).replace("raw_", "final_")
-        if not base.endswith(".mp4"):
-            base = os.path.splitext(base)[0] + ".mp4"
-            
+        if not base.endswith(".mp4"): base = os.path.splitext(base)[0] + ".mp4"
         output_path = os.path.join(self.download_path, base)
-        if not os.path.exists(input_path):
-            return input_path
 
         file_size = os.path.getsize(input_path)
-        MTPROTO_LIMIT = 1900 * 1024 * 1024 # Чуть меньше 2ГБ для запаса
+        MTPROTO_LIMIT = 1900 * 1024 * 1024 
         
-        # Если файл уже MP4 и проходит по весу — используем copy (без потери качества)
+        # Если это YouTube и файл нормальный - просто копируем контейнер
         if file_size <= MTPROTO_LIMIT and not is_insta and input_path.lower().endswith(".mp4"):
-            cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-map_metadata", "0", "-movflags", "+faststart", output_path]
+            cmd = ["ffmpeg", "-y", "-i", input_path, "-c", "copy", "-movflags", "+faststart", output_path]
         else:
-            # Конвертируем с сохранением разрешения (убрали scale=720)
-            cmd = ["ffmpeg", "-y", "-i", input_path, 
-                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", 
-                   "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_path]
+            cmd = ["ffmpeg", "-y", "-i", input_path, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", output_path]
 
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=1200)
-        except Exception as e:
-            print(f"FFmpeg Error: {e}")
-            if input_path.endswith(".mp4"): return input_path
-            
+        subprocess.run(cmd, capture_output=True)
         if os.path.exists(output_path):
-            if os.path.exists(input_path):
-                try: os.remove(input_path)
-                except: pass
+            if os.path.exists(input_path): os.remove(input_path)
             return output_path
         return input_path
 
     def _get_opts(self, url, filename_tmpl, quality=None):
-        url = url.strip()
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
-        cookies_path = os.path.join(os.getcwd(), "cookies.txt")
-
+        
+        # Запрещаем ID 18, чтобы не качал 109МБ
         if is_yt and quality:
-            # Исключаем формат 18 (109МБ), если нужно качество выше
             fmt = f"bestvideo[height<={quality}][format_id!=18]+bestaudio/best[height<={quality}][format_id!=18]/best"
         else:
             fmt = "bestvideo+bestaudio/best"
@@ -157,22 +135,18 @@ class VideoDownloader:
             "outtmpl": filename_tmpl,
             "noplaylist": True,
             "merge_output_format": "mp4",
-            "user_agent": random.choice(self.user_agents),
-            "rm_cachedir": True,
             "quiet": False,
             "nocheckcertificate": True,
+            "javascript_executor": "/usr/bin/node", # ФИКС
+            "rm_cachedir": True,
         }
 
+        cookies_path = os.path.join(os.getcwd(), "cookies.txt")
         if os.path.exists(cookies_path):
             opts["cookiefile"] = cookies_path
 
         if is_yt:
-            opts["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["mweb", "tv"],
-                    "skip": ["dash", "hls"]
-                }
-            }
+            opts["extractor_args"] = {"youtube": {"player_client": ["web", "tv"]}}
             
         return opts
 
@@ -180,65 +154,46 @@ class VideoDownloader:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url + str(time.time()))))[:8]
         temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
-        loop = asyncio.get_running_loop()
-
+        
         if "tiktok.com" in url and mode != 'audio':
-            try:
-                data = await self._download_tiktok_via_api(url, temp_path)
-                return data
-            except:
-                pass
+            try: return await self._download_tiktok_via_api(url, temp_path)
+            except: pass
 
-        data = await asyncio.to_thread(self._download_sync, url, temp_path, quality, progress_callback, loop)
+        data = await asyncio.to_thread(self._download_sync, url, temp_path, quality, progress_callback, asyncio.get_running_loop())
 
         if mode == 'audio':
             audio_path = self._process_audio(data.path)
-            data.path = audio_path
-            data.file_size = os.path.getsize(audio_path)
+            data.path, data.file_size = audio_path, os.path.getsize(audio_path)
             
         return data
 
-    def _download_sync(self, url: str, temp_path_raw: str, quality: str = None, progress_callback=None, loop=None) -> DownloadedVideo:
+    def _download_sync(self, url, temp_path_raw, quality, progress_callback, loop) -> DownloadedVideo:
         def ydl_hook(d):
-            if d['status'] == 'downloading' and progress_callback and loop:
+            if d['status'] == 'downloading' and progress_callback:
                 p = d.get('_percent_str', '0%')
                 clean_p = re.sub(r'\x1b\[[0-9;]*m', '', p).strip()
-                loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(progress_callback(clean_p))
-                )
+                loop.call_soon_threadsafe(lambda: asyncio.create_task(progress_callback(clean_p)))
 
         opts = self._get_opts(url, temp_path_raw, quality)
         opts['progress_hooks'] = [ydl_hook]
 
         with yt_dlp.YoutubeDL(opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=True)
-            except Exception as e:
-                raise DownloadError(f"Download failed: {str(e)}")
-                
+            info = ydl.extract_info(url, download=True)
             downloaded_path = ydl.prepare_filename(info)
             
+            # Если скачалось несколько файлов (видео+аудио), yt-dlp их склеит
             if not os.path.exists(downloaded_path):
-                base_no_ext = os.path.splitext(downloaded_path)[0]
                 for ext in [".mp4", ".mkv", ".webm"]:
-                    if os.path.exists(base_no_ext + ext):
-                        downloaded_path = base_no_ext + ext
+                    if os.path.exists(os.path.splitext(downloaded_path)[0] + ext):
+                        downloaded_path = os.path.splitext(downloaded_path)[0] + ext
                         break
 
-            duration = info.get("duration", 0)
-            is_insta = "instagram" in (info.get("extractor", "") or "").lower()
-            
-            final_path = self._process_video(downloaded_path, duration, is_insta=is_insta)
-
+            final_path = self._process_video(downloaded_path, info.get("duration", 0), "instagram" in url)
             return DownloadedVideo(
-                path=final_path, 
-                title=info.get("title", "Video"),
-                duration=int(duration or 0), 
-                author=info.get("uploader", "Unknown"),
-                width=info.get("width", 0), 
-                height=info.get("height", 0),
-                thumb_url=info.get("thumbnail", ""), 
-                file_size=os.path.getsize(final_path)
+                path=final_path, title=info.get("title", "Video"),
+                duration=int(info.get("duration") or 0), author=info.get("uploader", "Unknown"),
+                width=info.get("width", 0), height=info.get("height", 0),
+                thumb_url=info.get("thumbnail", ""), file_size=os.path.getsize(final_path)
             )
 
     async def _download_tiktok_via_api(self, url: str, temp_path: str) -> DownloadedVideo:
@@ -246,24 +201,12 @@ class VideoDownloader:
         async with aiohttp.ClientSession() as session:
             async with session.post(api_url, data={'url': url}) as response:
                 res = await response.json()
-                if res.get('code') != 0:
-                    raise DownloadError(f"TikTok API Error: {res.get('msg')}")
-                
                 data = res['data']
-                video_url = data.get('play')
-                
-                async with session.get(video_url) as video_res:
-                    with open(temp_path, 'wb') as f:
-                        f.write(await video_res.read())
-                        
-                duration = data.get('duration', 0)
+                async with session.get(data.get('play')) as video_res:
+                    with open(temp_path, 'wb') as f: f.write(await video_res.read())
                 return DownloadedVideo(
-                    path=temp_path, 
-                    title=data.get('title', 'TikTok Video'),
-                    duration=int(duration), 
-                    author=data.get('author', {}).get('nickname', 'TikTok User'),
-                    width=data.get('width', 0), 
-                    height=data.get('height', 0),
-                    thumb_url=data.get('cover', ''), 
-                    file_size=os.path.getsize(temp_path)
+                    path=temp_path, title=data.get('title', 'TikTok'),
+                    duration=int(data.get('duration', 0)), author=data.get('author', {}).get('nickname', 'User'),
+                    width=data.get('width', 0), height=data.get('height', 0),
+                    thumb_url=data.get('cover', ''), file_size=os.path.getsize(temp_path)
                 )
