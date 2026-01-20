@@ -10,7 +10,7 @@ from telethon import TelegramClient
 from telethon.tl.types import DocumentAttributeVideo
 
 from src.services.downloader import VideoDownloader
-from src.db import add_user, get_users, count_users, get_all_user_ids
+from src.db import add_user
 from src.config import conf
 
 CHANNEL_ID = conf.channel_id
@@ -82,7 +82,7 @@ async def is_subscribed(bot, user_id):
 async def start_cmd(message: types.Message, state: FSMContext):
     await state.clear()
     add_user(user_id=message.from_user.id, username=message.from_user.username, full_name=message.from_user.full_name, lang="ru")
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
+    kb = InlineKeyboardMarkup(inline_keyboard=[[ 
         InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
         InlineKeyboardButton(text="🇺🇸 English", callback_data="setlang_en")
     ]])
@@ -94,8 +94,6 @@ async def set_language(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(lang=lang)
     kb_rows = [[InlineKeyboardButton(text=STRINGS[lang]["btn_channel"], url=CHANNEL_URL)],
                [InlineKeyboardButton(text=STRINGS[lang]["btn_settings"], callback_data="settings_menu")]]
-    if str(callback.from_user.id) == str(conf.admin_id):
-        kb_rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_panel")])
     await callback.message.edit_text(STRINGS[lang]["welcome"].format(name=callback.from_user.full_name), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
 
 @video_router.message(F.text.regexp(r'(https?://\S+)'))
@@ -117,8 +115,10 @@ async def handle_url(message: types.Message, state: FSMContext):
     
     rows = []
     if is_yt:
-        rows.append([InlineKeyboardButton(text="📹 1080p", callback_data="dl_res_1080"), InlineKeyboardButton(text="📹 720p", callback_data="dl_res_720")])
-        rows.append([InlineKeyboardButton(text="📹 480p", callback_data="dl_res_480"), InlineKeyboardButton(text="📹 360p", callback_data="dl_res_360")])
+        rows.append([InlineKeyboardButton(text="📹 1080p", callback_data="dl_video_1080"),
+                     InlineKeyboardButton(text="📹 720p", callback_data="dl_video_720")])
+        rows.append([InlineKeyboardButton(text="📹 480p", callback_data="dl_video_480"),
+                     InlineKeyboardButton(text="📹 360p", callback_data="dl_video_360")])
     else:
         rows.append([InlineKeyboardButton(text=STRINGS[lang]["btn_video"], callback_data="dl_video")])
     
@@ -141,7 +141,6 @@ async def start_dl(callback: types.CallbackQuery, state: FSMContext):
     if not url: return await callback.answer("Ошибка: ссылка потеряна")
 
     parts = callback.data.split("_")
-    # ИСПРАВЛЕНИЕ: если в callback есть 'res', значит это видео
     mode = 'audio' if parts[1] == 'audio' else 'video'
     quality = parts[2] if len(parts) > 2 else None
 
