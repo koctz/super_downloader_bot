@@ -132,12 +132,14 @@ class VideoDownloader:
         url = url.strip()
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
         
+        # Проверяем наличие файла куков
+        cookies_path = os.path.join(os.getcwd(), "cookies.txt")
+        has_cookies = os.path.exists(cookies_path)
+
         if is_yt and quality and quality.isdigit():
             q = int(quality)
-            # Принудительно исключаем формат 18, чтобы yt-dlp даже не смотрел на него
-            fmt = f"bestvideo[height<={q}][format_id!=18]+bestaudio/best[height<={q}][format_id!=18]"
-        elif "instagram.com" in url or "vk.com" in url:
-            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+            # При наличии куков используем самую мощную формулу выбора
+            fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/best[height<={q}]/best"
         else:
             fmt = "bestvideo+bestaudio/best"
 
@@ -145,25 +147,25 @@ class VideoDownloader:
             "format": fmt,
             "outtmpl": filename_tmpl,
             "noplaylist": True,
-            "quiet": True,
-            "no_warnings": False, # Выключаем quiet, чтобы видеть ошибки если что
+            "quiet": False, # Видим прогресс в терминале
             "merge_output_format": "mp4",
             "user_agent": random.choice(self.user_agents),
             "rm_cachedir": True,
         }
 
+        # ПОДКЛЮЧАЕМ КУКИ ВСЕГДА, ЕСЛИ ОНИ ЕСТЬ
+        if has_cookies:
+            opts["cookiefile"] = cookies_path
+            print(f"DEBUG: Использую cookies.txt для {url}")
+
         if is_yt:
-            # 🔥 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: используем ios и web_creator
-            # Это обходит проблему с PO Token в 99% случаев
+            # Для YouTube используем более надежные клиенты при наличии куков
             opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["ios", "web_creator"],
+                    "player_client": ["web", "tv"], # TV клиент часто отдает 4K без токенов
                 }
             }
         
-        if ("instagram.com" in url) and os.path.exists("cookies.txt"):
-            opts["cookiefile"] = "cookies.txt"
-
         return opts
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
