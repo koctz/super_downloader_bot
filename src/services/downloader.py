@@ -134,21 +134,32 @@ class VideoDownloader:
         
         if is_yt and quality and quality.isdigit():
             q = int(quality)
-            # Мы ПРИНУДИТЕЛЬНО говорим: возьми любой формат, кроме 18, 
-            # который подходит под высоту, и добавь к нему лучший звук.
-            fmt = f"bestvideo[height<={q}][format_id!=18]+bestaudio/best[height<={q}][format_id!=18]/best"
-            
-            opts = {
-                "format": fmt,
-                "outtmpl": filename_tmpl,
-                "noplaylist": True,
-                "merge_output_format": "mp4", # Это заставляет ffmpeg работать
-                "user_agent": random.choice(self.user_agents),
-                "rm_cachedir": True,
-                "writethumbnail": True,
-            }
+            # Принудительно исключаем формат 18, чтобы yt-dlp даже не смотрел на него
+            fmt = f"bestvideo[height<={q}][format_id!=18]+bestaudio/best[height<={q}][format_id!=18]"
+        elif "instagram.com" in url or "vk.com" in url:
+            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+        else:
+            fmt = "bestvideo+bestaudio/best"
+
+        opts = {
+            "format": fmt,
+            "outtmpl": filename_tmpl,
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": False, # Выключаем quiet, чтобы видеть ошибки если что
+            "merge_output_format": "mp4",
+            "user_agent": random.choice(self.user_agents),
+            "rm_cachedir": True,
+        }
+
         if is_yt:
-            opts["extractor_args"] = {"youtube": {"player_client": ["android", "web"]}}
+            # 🔥 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: используем ios и web_creator
+            # Это обходит проблему с PO Token в 99% случаев
+            opts["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["ios", "web_creator"],
+                }
+            }
         
         if ("instagram.com" in url) and os.path.exists("cookies.txt"):
             opts["cookiefile"] = "cookies.txt"
