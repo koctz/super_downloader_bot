@@ -200,8 +200,7 @@ class VideoDownloader:
         if is_yt:
             opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["android", "web"],
-                    "skip": ["dash", "hls"]
+                    "player_client": ["android", "web"]
                 }
             }
 
