@@ -138,13 +138,18 @@ class VideoDownloader:
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
         cookies_path = os.path.join(os.getcwd(), "cookies.txt")
 
-        # Если это Ютуб, мы ОЧЕНЬ ЖЕСТКО задаем форматы
-        if is_yt and quality:
-            # Ищем видео (не формат 18) + аудио и объединяем
-            # Если не находит, берет просто лучшее до этой высоты
-            q = quality
-            fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/best[height<={q}][vcodec!*=avc1.42001E]/best"
+        # Если это YouTube, используем максимально простую и надежную формулу
+        if is_yt:
+            # Если качество передано (например, '1080'), качаем его. 
+            # Если нет — просто лучшее.
+            if quality and str(quality).isdigit():
+                # Мы просим: "лучшее видео до высоты Q + лучший звук" 
+                # ИЛИ "просто лучший файл до высоты Q"
+                fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+            else:
+                fmt = "bestvideo+bestaudio/best"
         else:
+            # Для остальных сервисов (Инста, ТТ)
             fmt = "bestvideo+bestaudio/best"
 
         opts = {
@@ -154,20 +159,18 @@ class VideoDownloader:
             "merge_output_format": "mp4",
             "user_agent": random.choice(self.user_agents),
             "rm_cachedir": True,
-            "quiet": False,
-            "no_warnings": False,
-            # ОЧЕНЬ ВАЖНО: принудительно заставляем искать Node.js
-            "check_formats": True, 
+            "quiet": False, # Оставляем False, чтобы ты видел прогресс в консоли
         }
 
+        # Принудительно подтягиваем куки, если файл существует
         if os.path.exists(cookies_path):
             opts["cookiefile"] = cookies_path
 
         if is_yt:
             opts["extractor_args"] = {
                 "youtube": {
-                    # Используем связку TV и WEB, это сейчас стандарт обхода
-                    "player_client": ["tv", "web"],
+                    # Оставляем только 'web', так как для 'tv' и 'ios' часто нужен PO Token
+                    "player_client": ["web"],
                 }
             }
         
