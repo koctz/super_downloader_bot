@@ -42,35 +42,6 @@ class VideoDownloader:
             video_id = url.split("shorts/")[1].split("?")[0]
             url = f"https://www.youtube.com/watch?v={video_id}"
         return url
-        
-    async def get_yt_resolutions(self, url: str):
-        url = self._normalize_url(url)
-        opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'user_agent': random.choice(self.user_agents),
-            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-            # Добавляем принудительный обход
-            'extractor_args': {'youtube': {'player_client': ['web', 'tv']}}
-        }
-        
-        def extract():
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                formats = info.get('formats', [])
-                
-                available_heights = set()
-                for f in formats:
-                    h = f.get('height')
-                    # Игнорируем только аудио и форматы без высоты
-                    if h and h >= 360 and f.get('vcodec') != 'none':
-                        # Проверяем, что это не тот самый "битый" формат без URL
-                        if f.get('url') or f.get('manifest_url'):
-                            available_heights.add(h)
-                
-                return sorted(list(available_heights), reverse=True)
-        
-        return await asyncio.to_thread(extract)
     
     async def get_video_info(self, url: str):
         url = self._normalize_url(url)
@@ -133,17 +104,50 @@ class VideoDownloader:
 
         return input_path
 
+async def get_yt_resolutions(self, url: str):
+        url = self._normalize_url(url)
+        # Пробуем получить форматы максимально мягким способом
+        opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'user_agent': random.choice(self.user_agents),
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+            'extractor_args': {'youtube': {'player_client': ['web', 'mweb', 'tv']}},
+            'check_formats': False, # Не проверяем доступность каждого, просто верим списку
+        }
+        
+        def extract():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                formats = info.get('formats', [])
+                
+                res = set()
+                for f in formats:
+                    h = f.get('height')
+                    if h and h >= 360 and (f.get('vcodec') != 'none' or f.get('acodec') != 'none'):
+                        res.add(h)
+                
+                # Если YouTube совсем "жадничает", добавим стандартный набор вручную
+                if not res:
+                    return [1080, 720, 480, 360]
+                
+                return sorted(list(res), reverse=True)
+        
+        try:
+            return await asyncio.to_thread(extract)
+        except Exception as e:
+            print(f"Extraction failed: {e}. Returning default resolutions.")
+            return [1080, 720, 360]
+
     def _get_opts(self, url, filename_tmpl, quality=None):
         url = url.strip()
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
         cookies_path = os.path.join(os.getcwd(), "cookies.txt")
 
-        if is_yt:
-            if quality and str(quality).isdigit():
-                # Корректный формат: выбираем лучшее видео с нужной высотой
-                fmt = f"bestvideo[height={quality}]+bestaudio/bestvideo[height<={quality}]+bestaudio/best"
-            else:
-                fmt = "bestvideo+bestaudio/best"
+        # Самая отказоустойчивая формула
+        if is_yt and quality:
+            # Сначала пытаемся собрать видео+аудио, если нет - берем любой лучший файл этой высоты
+            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
         else:
             fmt = "bestvideo+bestaudio/best"
 
@@ -155,18 +159,22 @@ class VideoDownloader:
             "user_agent": random.choice(self.user_agents),
             "rm_cachedir": True,
             "quiet": False,
+            "nocheckcertificate": True,
+            "ignoreerrors": True, # Не падать при мелких ошибках
         }
 
         if os.path.exists(cookies_path):
             opts["cookiefile"] = cookies_path
 
         if is_yt:
+            # МЕНЯЕМ ТАКТИКУ: используем mweb (мобильный веб), он меньше всего требует токенов
             opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["web"],
+                    "player_client": ["mweb", "web", "tv"],
+                    "skip": ["dash", "hls"] # Иногда помогает пробить Requested format
                 }
             }
-
+        
         return opts
 
 
