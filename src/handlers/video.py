@@ -207,8 +207,8 @@ async def handle_url(message: types.Message, state: FSMContext):
     
     rows = []
     if is_yt:
-        rows.append([InlineKeyboardButton(text="📹 1080p", callback_data="dl_1080"), InlineKeyboardButton(text="📹 720p", callback_data="dl_720")])
-        rows.append([InlineKeyboardButton(text="📹 480p", callback_data="dl_480"), InlineKeyboardButton(text="📹 360p", callback_data="dl_360")])
+        rows.append([InlineKeyboardButton(text="📹 1080p", callback_data="dl_res_1080"), InlineKeyboardButton(text="📹 720p", callback_data="dl_res_720")])
+        rows.append([InlineKeyboardButton(text="📹 480p", callback_data="dl_res_480"), InlineKeyboardButton(text="📹 360p", callback_data="dl_res_360")])
     else:
         rows.append([InlineKeyboardButton(text=STRINGS[lang]["btn_video"], callback_data="dl_video")])
     
@@ -237,16 +237,14 @@ async def start_dl(callback: types.CallbackQuery, state: FSMContext):
     if not url: return await callback.answer("Ошибка: ссылка потеряна")
 
     parts = callback.data.split("_")
-    # Исправленная логика:
-    if parts[1] == 'audio':
+    
+    if 'audio' in parts:
         mode = 'audio'
         quality = None
-    elif parts[1] == 'res': # Если нажата кнопка с выбором разрешения (dl_res_1080)
+    else:
         mode = 'video'
-        quality = parts[2]  # Теперь тут будет '1080'
-    else: # Для обычного видео без выбора (dl_video)
-        mode = 'video'
-        quality = None
+        # Берем последний элемент, если это число (1080, 720 и т.д.)
+        quality = parts[-1] if parts[-1].isdigit() else None
 
     try: await callback.message.delete()
     except: pass
