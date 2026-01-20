@@ -136,15 +136,11 @@ class VideoDownloader:
     def _get_opts(self, url, filename_tmpl, quality=None):
         url = url.strip()
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
-        
-        # Проверяем наличие файла куков
         cookies_path = os.path.join(os.getcwd(), "cookies.txt")
-        has_cookies = os.path.exists(cookies_path)
 
-        if is_yt and quality and quality.isdigit():
-            q = int(quality)
-            # При наличии куков используем самую мощную формулу выбора
-            fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/best[height<={q}]/best"
+        if is_yt and quality:
+            # Пытаемся взять лучшее до нужной высоты
+            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
         else:
             fmt = "bestvideo+bestaudio/best"
 
@@ -152,22 +148,21 @@ class VideoDownloader:
             "format": fmt,
             "outtmpl": filename_tmpl,
             "noplaylist": True,
-            "quiet": False, # Видим прогресс в терминале
             "merge_output_format": "mp4",
             "user_agent": random.choice(self.user_agents),
             "rm_cachedir": True,
+            "nocheckcertificate": True,
         }
 
-        # ПОДКЛЮЧАЕМ КУКИ ВСЕГДА, ЕСЛИ ОНИ ЕСТЬ
-        if has_cookies:
+        if os.path.exists(cookies_path):
             opts["cookiefile"] = cookies_path
-            print(f"DEBUG: Использую cookies.txt для {url}")
 
         if is_yt:
-            # Для YouTube используем более надежные клиенты при наличии куков
+            # Комбинация TV и Android - самая стабильная против SABR (ошибки в твоем логе)
             opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["web", "tv"], # TV клиент часто отдает 4K без токенов
+                    "player_client": ["tv", "android"],
+                    "player_skip": ["web"] # Пропускаем web, так как он выдает ошибку SABR
                 }
             }
         
