@@ -150,14 +150,21 @@ class VideoDownloader:
         is_yt = "youtube.com" in url or "youtu.be" in url
         
         if is_yt and quality and quality.isdigit():
-            q = quality
-            # Если просим 720 и выше, запрещаем формат №18 (avc1.42001E), который весит 109МБ
-            if int(q) >= 720:
+            q = int(quality)
+            # Если выбрано 720p, 1080p, 4K и т.д.
+            if q >= 720:
+                # МЫ ГОВОРИМ: Возьми лучшее видео не выше Q (но только НЕ формат 18) 
+                # и приклей к нему лучший звук.
+                # 'vcodec!*=avc1.42001E' — это техническое имя того самого формата №18
                 fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/bestvideo[height<={q}]+bestaudio/best"
             else:
-                fmt = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]"
+                # Для 360p и ниже оставляем как есть
+                fmt = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]/best"
+        elif quality and quality.isdigit():
+            # Для других платформ
+            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
         else:
-            # Логика для Instagram, TikTok и прочих (максимальное качество)
+            # Дефолт для Инсты/ТТ
             fmt = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
 
         opts = {
@@ -168,13 +175,19 @@ class VideoDownloader:
             'no_warnings': True,
             'merge_output_format': 'mp4',
             'user_agent': random.choice(self.user_agents),
-            'rm_cachedir': True, # Очистка кэша обязательна
+            'rm_cachedir': True,  # Обязательно чистим кэш
         }
 
         if "instagram.com" in url:
             if os.path.exists("cookies.txt"): opts['cookiefile'] = "cookies.txt"
         elif is_yt:
-            opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
+            # Эти аргументы заставляют YouTube отдавать все потоки
+            opts['extractor_args'] = {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'skip': ['dash', 'hls'] 
+                }
+            }
             
         return opts
 
