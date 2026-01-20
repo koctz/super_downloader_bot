@@ -134,35 +134,19 @@ class VideoDownloader:
         
         if is_yt and quality and quality.isdigit():
             q = int(quality)
-            # СТРАТЕГИЯ ВЫБОРА: 
-            # 1. Пытаемся взять AV1 (самый легкий) + аудио m4a
-            # 2. ИЛИ VP9 + аудио m4a
-            # 3. ИЛИ AVC (стандарт) + аудио m4a
-            # 4. В конце убираем формат 18 (avc1.42001E), если просили качество выше 360
-            vcodec_filter = "[vcodec!*=avc1.42001E]" if q > 360 else ""
+            # Мы ПРИНУДИТЕЛЬНО говорим: возьми любой формат, кроме 18, 
+            # который подходит под высоту, и добавь к нему лучший звук.
+            fmt = f"bestvideo[height<={q}][format_id!=18]+bestaudio/best[height<={q}][format_id!=18]/best"
             
-            fmt = (
-                f"bestvideo[height<={q}][vcodec^=av01]+bestaudio[ext=m4a]/"
-                f"bestvideo[height<={q}][vcodec^=vp9]+bestaudio[ext=m4a]/"
-                f"bestvideo[height<={q}]{vcodec_filter}+bestaudio[ext=m4a]/"
-                f"best[height<={q}]"
-            )
-        elif "instagram.com" in url or "vk.com" in url:
-            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
-        else:
-            fmt = "bestvideo+bestaudio/best"
-
-        opts = {
-            "format": fmt,
-            "outtmpl": filename_tmpl,
-            "noplaylist": True,
-            "quiet": True,
-            "no_warnings": True,
-            "merge_output_format": "mp4",
-            "user_agent": random.choice(self.user_agents),
-            "rm_cachedir": True,
-        }
-
+            opts = {
+                "format": fmt,
+                "outtmpl": filename_tmpl,
+                "noplaylist": True,
+                "merge_output_format": "mp4", # Это заставляет ffmpeg работать
+                "user_agent": random.choice(self.user_agents),
+                "rm_cachedir": True,
+                "writethumbnail": True,
+            }
         if is_yt:
             opts["extractor_args"] = {"youtube": {"player_client": ["android", "web"]}}
         
