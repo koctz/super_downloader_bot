@@ -165,7 +165,8 @@ class VideoDownloader:
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
         unique_id = str(abs(hash(url + str(time.time()))))[:8]
-        temp_path = os.path.join(self.download_path, f"raw_{unique_id}.mp4")
+        q_suffix = quality if quality else "max"
+        temp_path = os.path.join(self.download_path, f"raw_{q_suffix}_{unique_id}.mp4")
         loop = asyncio.get_running_loop()
 
         if "tiktok.com" in url and mode != 'audio':
