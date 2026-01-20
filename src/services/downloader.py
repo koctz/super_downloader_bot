@@ -147,8 +147,8 @@ class VideoDownloader:
 
 # ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
-    url = url.strip()
-    is_yt = ("youtube.com" in url) or ("youtu.be" in url)
+       url = url.strip()
+       is_yt = ("youtube.com" in url) or ("youtu.be" in url)
 
     # -----------------------------
     # 🎯 Формат выбора качества
