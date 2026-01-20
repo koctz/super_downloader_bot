@@ -117,12 +117,13 @@ class VideoDownloader:
             return output_path
         return input_path
 
+# ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
         if quality:
-            # ПРАВКА: Более точный выбор формата для YouTube
-            fmt = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}]/best'
+            # Мы убрали [ext=mp4], чтобы он скачивал ЛЮБОЙ формат (WebM/MKV), где есть высокое качество
+            fmt = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best'
         else:
-            fmt = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
+            fmt = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
 
         opts = {
             'format': fmt,
@@ -132,6 +133,11 @@ class VideoDownloader:
             'no_warnings': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
+            
+            # 🔥 ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
+            # Эта строчка заставит yt-dlp самому склеить видео+аудио в MP4
+            'merge_output_format': 'mp4',
+            
             'user_agent': random.choice(self.user_agents),
         }
         
