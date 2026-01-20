@@ -149,25 +149,44 @@ class VideoDownloader:
     def _get_opts(self, url, filename_tmpl, quality=None):
         url = url.strip()
         is_yt = ("youtube.com" in url) or ("youtu.be" in url)
+        is_insta = "instagram.com" in url
+        is_vk = "vk.com" in url or "vk.ru" in url
+        is_tt = "tiktok.com" in url
 
         # -----------------------------
-        # 🎯 Формат выбора качества (A)
+        # 🎯 YouTube — ABC логика
         # -----------------------------
         if is_yt and quality and quality.isdigit():
             q = int(quality)
-
-            # 1) Пытаемся взять AVC строго в выбранном качестве
             fmt = (
                 f"bestvideo[height={q}][vcodec*=avc]+bestaudio[acodec*=mp4a]/"
-                # 2) Если нет AVC — берём любой кодек в этом качестве
                 f"bestvideo[height={q}]+bestaudio/"
-                # 3) Если нет такого качества — fallback на best
                 f"best"
             )
 
+        # -----------------------------
+        # 🎯 Instagram — всегда MP4
+        # -----------------------------
+        elif is_insta:
+            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+
+        # -----------------------------
+        # 🎯 VK — всегда MP4
+        # -----------------------------
+        elif is_vk:
+            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+
+        # -----------------------------
+        # 🎯 TikTok — формат не важен (API)
+        # -----------------------------
+        elif is_tt:
+            fmt = "best"
+
+        # -----------------------------
+        # 🎯 Остальные — лучший MP4
+        # -----------------------------
         else:
-            # Для TikTok / Instagram / VK — лучший MP4
-            fmt = "bestvideo+bestaudio/best"
+            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
 
         # -----------------------------
         # 🎯 Базовые настройки
@@ -194,17 +213,14 @@ class VideoDownloader:
                 }
             }
 
-            if os.path.exists("cookies.txt"):
-                opts["cookiefile"] = "cookies.txt"
-
         # -----------------------------
         # 🎯 Instagram: куки обязательны
         # -----------------------------
-        elif "instagram.com" in url:
-            if os.path.exists("cookies.txt"):
-                opts["cookiefile"] = "cookies.txt"
+        if is_insta and os.path.exists("cookies.txt"):
+            opts["cookiefile"] = "cookies.txt"
 
         return opts
+
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
         url = self._normalize_url(url)
