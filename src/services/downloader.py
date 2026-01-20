@@ -44,25 +44,30 @@ class VideoDownloader:
         return url
         
     async def get_yt_resolutions(self, url: str):
-        """Метод специально для YouTube: вытягивает только реально доступные разрешения"""
         url = self._normalize_url(url)
         opts = {
             'quiet': True,
             'no_warnings': True,
             'user_agent': random.choice(self.user_agents),
-            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None
+            'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
+            # Добавляем принудительный обход
+            'extractor_args': {'youtube': {'player_client': ['web', 'tv']}}
         }
         
         def extract():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 formats = info.get('formats', [])
+                
                 available_heights = set()
                 for f in formats:
                     h = f.get('height')
-                    # Фильтруем только видео-потоки
+                    # Игнорируем только аудио и форматы без высоты
                     if h and h >= 360 and f.get('vcodec') != 'none':
-                        available_heights.add(h)
+                        # Проверяем, что это не тот самый "битый" формат без URL
+                        if f.get('url') or f.get('manifest_url'):
+                            available_heights.add(h)
+                
                 return sorted(list(available_heights), reverse=True)
         
         return await asyncio.to_thread(extract)
