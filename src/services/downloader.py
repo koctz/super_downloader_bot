@@ -182,7 +182,7 @@ class VideoDownloader:
 
         opts = self._get_opts(url, temp_path_raw, quality)
         opts['progress_hooks'] = [ydl_hook]
-
+        print(f"DEBUG: Скачиваю URL: {url} | Выбранное качество: {quality}")
         with yt_dlp.YoutubeDL(opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=True)
