@@ -119,14 +119,23 @@ class VideoDownloader:
 
 # ✅ НОВЫЙ КОД
     def _get_opts(self, url, filename_tmpl, quality=None):
-        if quality and quality.isdigit():
-            # 🔥 ЖЕСТКИЙ ВЫБОР:
-            # Ищем видео строго не выше выбранного качества + лучший звук
-            # Либо просто лучшее видео не выше этого качества (со звуком внутри)
-            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"
+        # Определяем, YouTube это или нет
+        is_youtube = "youtube.com" in url or "youtu.be" in url
+        
+        if is_youtube and quality and quality.isdigit():
+            # Для YouTube: исключаем комбинированный формат 18 (360p), 
+            # если запрошено качество выше, и собираем из видео + аудио.
+            q = quality
+            if int(q) > 360:
+                fmt = f"bestvideo[height<={q}][vcodec!*=avc1.42001E]+bestaudio/best[height<={q}]"
+            else:
+                fmt = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]"
+        elif quality and quality.isdigit():
+            # Для других платформ (если они поддерживают выбор качества)
+            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
         else:
-            # Если качество не указано, берем 1080p или ниже
-            fmt = "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+            # По умолчанию (Instagram, TikTok, VK и т.д.)
+            fmt = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
 
         opts = {
             'format': fmt,
@@ -136,20 +145,21 @@ class VideoDownloader:
             'no_warnings': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
-            # Конвертируем в mp4 для совместимости с Telegram
             'merge_output_format': 'mp4',
             'user_agent': random.choice(self.user_agents),
-            # Помогаем yt-dlp разобраться с форматами YouTube
-            'youtube_include_dash_manifest': True,
-            'youtube_include_hls_manifest': True,
         }
-        
+
+        # Логика куки и специфичных аргументов
         if "instagram.com" in url:
             cookies_path = os.path.join(os.getcwd(), "cookies.txt")
-            if os.path.exists(cookies_path): opts['cookiefile'] = cookies_path
-        elif "youtube.com" in url or "youtu.be" in url:
+            if os.path.exists(cookies_path): 
+                opts['cookiefile'] = cookies_path
+        elif is_youtube:
             opts['extractor_args'] = {'youtube': {'player_client': ['android', 'web']}}
-            
+            # Добавляем манифесты для лучшего поиска форматов
+            opts['youtube_include_dash_manifest'] = True
+            opts['youtube_include_hls_manifest'] = True
+
         return opts
 
     async def download(self, url: str, mode: str = 'video', quality: str = None, progress_callback=None) -> DownloadedVideo:
